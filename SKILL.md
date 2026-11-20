@@ -1,6 +1,6 @@
 # ai-pcb-design-skill
 
-**Version:** 1.0.0 — 2026-11-20
+**Version:** 1.1.0 — 2026-11-20
 **What it is:** a skill that teaches an AI assistant to design printed
 circuit boards (PCBs) — from a single user prompt to a manufacturable
 board: schematic, layout, DRC checks, KiCad 10+ output and scripts.
@@ -335,6 +335,38 @@ sensitive analogue → power/ground (or planes) → general signals.**
 - Switching regulator hot loop small (input cap → switch node →
   inductor → output cap); crystal close to its IC; sensitive sensor
   lines never under a switching regulator.
+
+#### 4.4.1 Automatic corner fix (`fix_corners.py`)
+
+The rule above is checked by `drc_check.py` (warning `corner-90`)
+and fixed by `kit/fix_corners.py` — the skill does not leave 90°
+corners to manual re-routing:
+
+- **When to use it:** after routing, before the final DRC run. Run
+  `drc_check.py` first; if it reports `corner-90` warnings, run
+  `fix_corners.py` on the same `.kicad_pcb`, then run `drc_check.py`
+  again — the `corner-90` warnings must be 0.
+- **What it does:** each 90° corner is replaced by a 45° chamfer —
+  both segments are shortened by the chamfer length and a diagonal
+  segment is inserted. Chamfer length =
+  `min(corner_fix.chamfer_mm, half of the shorter segment)` from
+  `kit/config.json` (default 0.5 mm). Nets, widths and layers are
+  preserved; 45° corners and arcs are left alone.
+- **Safety first:** the input file is **never overwritten by default**
+  — the fixed board goes to `<name>.fixed.kicad_pcb`. `--in-place`
+  is allowed only with an automatic backup `<name>.bak` (a checkpoint
+  before the mutation, skill rule G8). `--dry-run` prints what would
+  change and writes nothing. If the fix is disabled in the config
+  (`corner_fix.enabled = false`), the script reports the corners and
+  changes nothing.
+- **Human review:** the fixed board is a proposal, not a proof. The
+  user reviews the result (visual/3D check) and re-runs `drc_check`
+  before the board is used.
+- **Limits:** only 90° → 45° chamfers. The script never moves
+  components, vias or pads, never changes a net, a width or a layer,
+  and never touches acute angles (< 90°) — those are reported as
+  manual work, as are vertices where 3+ segments meet. A chamfer
+  shorter than 0.05 mm is skipped (segment too short to chamfer).
 
 ### 4.5 DRC + pre-manufacturing check
 
@@ -1205,6 +1237,7 @@ Windows PC, with no installation). See `kit/README.md` for full usage.
 | `bom_check.py` | Missing MPN / footprint / value, duplicate reference, quantity mismatch, missing LCSC — on a BOM CSV |
 | `trace_width.py` | IPC-2221 trace width for a current (single value, table, or a CSV of nets) |
 | `rules_check.py` | Spec-first lint (§2): pin on two nets, unknown reference, unconnected power pin, missing decoupling / bulk cap, I2C without pull-up, single-pin net |
+| `fix_corners.py` | **Fixer (not a checker):** chamfers 90° corners to 45° in a `.kicad_pcb` — writes `<name>.fixed.kicad_pcb` by default, `--in-place` only with a `.bak` backup, `--dry-run` changes nothing; acute angles are reported, never fixed |
 | `run_all.py` | Runs all four checks on the example files and prints one summary |
 
 **Rules are user-editable:** all thresholds live in `kit/config.json`
@@ -1222,11 +1255,11 @@ unparseable file, bad config).
 
 ---
 
-## 13. What v1.0 does NOT cover
+## 13. What v1.1 does NOT cover
 
-v1.0 covers the 13 capabilities (§4) and the high-priority methods
-(§6). These are on the **v1.1 roadmap** (see README.md) — the skill
-does not pretend to do them yet:
+v1.1 covers the 13 capabilities (§4), the high-priority methods
+(§6) and the automatic corner fix (§4.4.1). These are on the **v1.2
+roadmap** (see README.md) — the skill does not pretend to do them yet:
 
 - EMC pre-compliance check (44 rules, 18 categories)
 - BOM management + sourcing (stock checks, LCSC/DigiKey/Mouser,

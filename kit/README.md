@@ -15,6 +15,7 @@ macOS and Linux with Python 3.8+.
 | `bom_check.py` | Missing MPN / footprint / value, duplicate reference, quantity mismatch, missing LCSC | BOM `.csv` |
 | `trace_width.py` | IPC-2221 trace width for a current (single value, table, or a CSV of nets) | flags / `.csv` |
 | `rules_check.py` | Spec-first lint: pin on two nets, unknown reference, unconnected power pin, missing decoupling / bulk cap, I2C without pull-up, single-pin net | `spec.json` |
+| `fix_corners.py` | **Fixer, not a checker:** chamfers 90° corners to 45° in a `.kicad_pcb` — writes `<name>.fixed.kicad_pcb` by default; `--in-place` only with a `.bak` backup; `--dry-run` changes nothing; acute angles are reported, never fixed | `.kicad_pcb` file |
 | `run_all.py` | Runs all four checks on the example files and prints one summary | — |
 
 ## Usage
@@ -26,22 +27,35 @@ python bom_check.py examples\sample_bom.csv
 python trace_width.py --current 2 --copper 1 --layer external
 python trace_width.py --check-csv examples\nets.csv
 python rules_check.py examples\spec.json
+python fix_corners.py examples\sample.kicad_pcb
+python fix_corners.py examples\sample.kicad_pcb --dry-run
 python run_all.py
 ```
 
 ```bash
 # macOS / Linux
 python3 drc_check.py examples/sample.kicad_pcb
+python3 fix_corners.py examples/sample.kicad_pcb
 python3 run_all.py
 ```
 
-Add `--json` to any checker to get machine-readable output.
+`fix_corners.py` never overwrites the input by default — the fixed
+board goes to `sample.fixed.kicad_pcb`. `--in-place` overwrites the
+input only after writing a `<name>.bak` backup. After fixing, always
+re-run `drc_check.py` on the output: the `corner-90` warnings must
+be 0.
+
+Add `--json` to any checker to get machine-readable output
+(`fix_corners.py` has no `--json` — it prints the audit log only).
 
 ## Exit codes
 
 - `0` — pass (warnings are allowed)
 - `1` — fail (at least one error)
 - `2` — setup missing (file not found, unparseable file, bad config)
+
+`fix_corners.py` differs: `0` = fixed, or nothing to fix; `1` = parse
+error; `2` = setup missing (file not found, bad config).
 
 ## Audit log
 
@@ -82,6 +96,11 @@ what the checks catch). The expected result for each is FAIL:
   - 1× warning: SCL has no pull-up resistor
   - 1× warning: LONELY is a single-pin net
   - 1× warning: U1.7 is in no net and not in no_connect
+- `sample.kicad_pcb` → `fix_corners.py`: **1 corner fixed** (CANH at
+  (110, 102), chamfer 0.50 mm) → writes `sample.fixed.kicad_pcb`.
+  `drc_check.py` on the fixed file reports **0 `corner-90` warnings**
+  (the other intentional errors in the sample remain — the fixer only
+  fixes corners, nothing else).
 
 ## What the kit does NOT do
 

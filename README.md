@@ -2,7 +2,19 @@
 
 Teach AI models to design PCBs — from a single prompt to a manufacturable board: schematic, layout, DRC checks, KiCad 10+ output and scripts.
 
-**Version:** 1.0.0 — 2026-11-20
+**Version:** 1.1.0 — 2026-11-20
+
+## Changelog
+
+### v1.1.0 — 2026-11-20
+
+- **Automatic 90° → 45° corner fix** (`kit/fix_corners.py`) — the
+  skill now not only finds 90-degree corners, it fixes them: each
+  corner is chamfered (default 0.5 mm, configurable in
+  `kit/config.json`), the input file is never overwritten by default
+  (`<name>.fixed.kicad_pcb`), `--in-place` only with an automatic
+  `.bak` backup, `--dry-run` changes nothing. Acute angles are
+  reported as manual work, never auto-fixed. See `SKILL.md` §4.4.1.
 
 ## What it does
 
@@ -59,6 +71,7 @@ ai-pcb-design-skill/
     ├── README.md       # kit usage, expected results
     ├── config.json     # user-editable rules (thresholds)
     ├── drc_check.py    # DRC checks on a .kicad_pcb file
+    ├── fix_corners.py  # automatic 90° → 45° corner fix
     ├── bom_check.py    # checks on a BOM CSV
     ├── trace_width.py  # IPC-2221 trace-width calculator
     ├── rules_check.py  # spec-first lint (spec.json)
@@ -79,6 +92,11 @@ python kit/drc_check.py my-board/board.kicad_pcb
 python kit/bom_check.py my-board/bom.csv
 python kit/trace_width.py --check-csv my-board/nets.csv
 
+# 3b. If drc_check reports 90-degree corners, fix them automatically
+#     (writes board.fixed.kicad_pcb, input untouched), then re-check
+python kit/fix_corners.py my-board/board.kicad_pcb
+python kit/drc_check.py my-board/board.fixed.kicad_pcb
+
 # 4. Or run everything on the examples
 python kit/run_all.py
 ```
@@ -91,7 +109,7 @@ prints an audit log at the end — the log is the proof the check ran.
 
 ## Roadmap
 
-### v1.1 (planned)
+### v1.2 (planned)
 
 - Full EasyEDA API automation (running bridge + complete command set)
 - EMC pre-compliance check (44 rules, 18 categories)
@@ -109,7 +127,7 @@ prints an audit log at the end — the log is the proof the check ran.
 - Audit log / run cache across runs
 - Design documentation (design brief, PDF document)
 
-### v1.2 (ideas)
+### v1.3 (ideas)
 
 - DDR4 routing (after DDR2/DDR3 is proven)
 - More verified sub-circuits from real built boards
