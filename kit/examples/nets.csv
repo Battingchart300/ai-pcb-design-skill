@@ -1,0 +1,5 @@
+net,current_a,actual_mm,copper_oz,layer
++3V3,2.0,0.5,1,external
++5V,1.0,0.35,1,external
+MOTOR,3.0,1.5,1,external
+LED,0.2,0.2,1,external
