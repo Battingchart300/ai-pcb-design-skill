@@ -2,9 +2,25 @@
 
 Teach AI models to design PCBs — from a single prompt to a manufacturable board: schematic, layout, DRC checks, KiCad 10+ output and scripts.
 
-**Version:** 1.2.0 — 2026-11-23
+**Version:** 1.2.1 — 2026-11-23
 
 ## Changelog
+
+### v1.2.1 — 2026-11-23
+
+- **YAML frontmatter on `SKILL.md`** (`name` + `description`) — Claude
+  Code and other Agent Skills hosts need it to load the skill at all.
+- **`drc_check.py` now checks clearance and shorts**: copper of
+  different nets on the same layer closer than `min_clearance_mm`
+  (0.20 mm) is an error, touching/overlapping copper is a short.
+  Covers segments, arcs, vias and pads; zones (pours) are not covered
+  — `kicad-cli pcb drc` is still required. New example
+  `kit/examples/sample_clearance.kicad_pcb` demonstrates the checks.
+- **`run_all.py` takes your own files**: `--pcb`, `--bom`, `--nets`,
+  `--spec` (each defaults to the example file).
+- **Fixed §5.2**: an internal trace needs **~2.6× the width** (not
+  ~2×) for the same current — from `I = k·ΔT^0.44·A^0.725`,
+  `A_int/A_ext = 2^(1/0.725) ≈ 2.6`.
 
 ### v1.2.0 — 2026-11-23
 

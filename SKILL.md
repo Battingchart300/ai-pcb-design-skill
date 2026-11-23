@@ -1,6 +1,11 @@
+---
+name: ai-pcb-design-skill
+description: Teaches an AI assistant to design PCBs from a single prompt to a manufacturable board — schematic, layout, DRC checks, KiCad 10+ output. Use when designing, reviewing or fixing a PCB with an AI.
+---
+
 # ai-pcb-design-skill
 
-**Version:** 1.2.0 — 2026-11-23
+**Version:** 1.2.1 — 2026-11-23
 **What it is:** a skill that teaches an AI assistant to design printed
 circuit boards (PCBs) — from a single user prompt to a manufacturable
 board: schematic, layout, DRC checks, KiCad 10+ output and scripts.
@@ -578,8 +583,10 @@ against a blog table.
 ### 5.2 Trace width vs current (IPC-2221, 1 oz = 35 µm, ΔT = 10 °C, external layer)
 
 Formula: `I = k · ΔT^0.44 · A^0.725`, `A` = width × thickness in mil²,
-`k = 0.048` external, `0.024` internal (an **internal trace needs ~2×
-the width** for the same current). IPC-2152 supersedes IPC-2221 for
+`k = 0.048` external, `0.024` internal. From the formula, the same
+current needs `A_int / A_ext = (0.048 / 0.024)^(1/0.725) = 2^1.38 ≈ 2.6`,
+so an **internal trace needs ~2.6× the width** for the same current at
+the same copper thickness. IPC-2152 supersedes IPC-2221 for
 current capacity, but IPC-2221 remains the standard quick estimator.
 Add 15–25% margin, use steady-state (not inrush) current.
 
@@ -1263,12 +1270,12 @@ Windows PC, with no installation). See `kit/README.md` for full usage.
 
 | Script | Checks |
 |---|---|
-| `drc_check.py` | Unrouted nets, trace width, via drill/pad, annular ring, 90° corners, copper-to-edge — on a raw `.kicad_pcb` |
+| `drc_check.py` | Unrouted nets, trace width, via drill/pad, annular ring, 90° corners, copper-to-edge, clearance and shorts (different nets, same layer; zones not covered, `kicad-cli pcb drc` still required) — on a raw `.kicad_pcb` |
 | `bom_check.py` | Missing MPN / footprint / value, duplicate reference, quantity mismatch, missing LCSC — on a BOM CSV |
 | `trace_width.py` | IPC-2221 trace width for a current (single value, table, or a CSV of nets) |
 | `rules_check.py` | Spec-first lint (§2): pin on two nets, unknown reference, unconnected power pin, missing decoupling / bulk cap, I2C without pull-up, single-pin net |
 | `fix_corners.py` | **Fixer (not a checker):** chamfers 90° corners to 45° in a `.kicad_pcb` — writes `<name>.fixed.kicad_pcb` by default, `--in-place` only with a `.bak` backup, `--dry-run` changes nothing; acute angles are reported, never fixed |
-| `run_all.py` | Runs all four checks on the example files and prints one summary |
+| `run_all.py` | Runs all four checks on the example files — or on your own board with `--pcb` / `--bom` / `--nets` / `--spec` — and prints one summary |
 
 **Rules are user-editable:** all thresholds live in `kit/config.json`
 — edit the numbers there and every script picks them up. The values
