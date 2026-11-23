@@ -1,0 +1,22 @@
+Arduino UNO R3 reference design — license and attribution
+==========================================================
+
+The design files in this folder (arduino_Uno_Rev3-02-TH.sch,
+arduino_Uno_Rev3-02-TH.brd, Arduino_Uno_Rev3-schematic.pdf) are the
+official Arduino UNO R3 reference design, published by Arduino.
+
+Source:
+  https://arduino.cc/en/uploads/Main/arduino_Uno_Rev3-02-TH.zip
+  https://arduino.cc/en/uploads/Main/Arduino_Uno_Rev3-schematic.pdf
+
+License: Creative Commons Attribution-ShareAlike (CC BY-SA),
+as stated by Arduino for its hardware reference designs.
+Copyright and trademark: Arduino.
+
+This means: you may share and adapt the design if you give
+appropriate credit to Arduino and distribute any adapted design
+under the same CC BY-SA license.
+
+The ai-pcb-design-skill itself is MIT licensed (see the LICENSE file
+in the repository root). This folder keeps Arduino's own license:
+the MIT license of the skill does NOT apply to these Arduino files.
