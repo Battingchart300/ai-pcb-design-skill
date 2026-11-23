@@ -2,9 +2,25 @@
 
 Teach AI models to design PCBs — from a single prompt to a manufacturable board: schematic, layout, DRC checks, KiCad 10+ output and scripts.
 
-**Version:** 1.1.0 — 2026-11-20
+**Version:** 1.2.0 — 2026-11-23
 
 ## Changelog
+
+### v1.2.0 — 2026-11-23
+
+- **Reference boards (`prototypes/`)** — two complete, proven,
+  manufactured boards to learn from, so any AI using the skill
+  sees what a good board looks like before designing one (see
+  `SKILL.md` §1, "Reference boards first"):
+  - **Arduino UNO R3** (`prototypes/arduino-uno-r3/`) — official
+    reference design (EAGLE schematic + layout, schematic PDF),
+    CC BY-SA, with a README on what to learn from it.
+  - **Olimex ESP32-EVB, Rev L** (`prototypes/esp32-evb/`) —
+    Apache 2.0, KiCad, 2-layer (Rev L schematic + layout, Rev K2
+    BOM — Rev L has no BOM of its own), with a README on what to
+    learn from it.
+  - The reference boards keep their own licenses; the skill
+    itself stays MIT.
 
 ### v1.1.0 — 2026-11-20
 
@@ -41,6 +57,9 @@ printed circuit boards:
 - **A kit of real Python scripts** (`kit/`) that verify the design
   independently: the model never declares a board correct — the scripts
   do, and a human reviews the result.
+- **Reference boards (`prototypes/`)** — complete, proven boards to
+  study before designing a similar one (Olimex ESP32-EVB, Arduino
+  UNO R3). Patterns to learn from, never files to copy blindly.
 
 ## Works with any AI
 
@@ -67,6 +86,10 @@ ai-pcb-design-skill/
 ├── SKILL.md            # the skill (the whole workflow)
 ├── README.md           # this file
 ├── LICENSE             # MIT
+├── prototypes/         # reference boards to study first
+│   ├── README.md       # index + how-to-use rules
+│   ├── esp32-evb/      # Olimex ESP32-EVB, Rev L (Apache 2.0)
+│   └── arduino-uno-r3/ # Arduino UNO R3 (CC BY-SA)
 └── kit/
     ├── README.md       # kit usage, expected results
     ├── config.json     # user-editable rules (thresholds)
@@ -109,7 +132,7 @@ prints an audit log at the end — the log is the proof the check ran.
 
 ## Roadmap
 
-### v1.2 (planned)
+### v1.3 (planned)
 
 - Full EasyEDA API automation (running bridge + complete command set)
 - EMC pre-compliance check (44 rules, 18 categories)
@@ -127,7 +150,7 @@ prints an audit log at the end — the log is the proof the check ran.
 - Audit log / run cache across runs
 - Design documentation (design brief, PDF document)
 
-### v1.3 (ideas)
+### v1.4 (ideas)
 
 - DDR4 routing (after DDR2/DDR3 is proven)
 - More verified sub-circuits from real built boards

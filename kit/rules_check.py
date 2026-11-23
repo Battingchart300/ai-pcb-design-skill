@@ -49,7 +49,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 SCRIPT = "rules_check"
 
 CAP_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([unp]?)[fF]\s*$", re.IGNORECASE)

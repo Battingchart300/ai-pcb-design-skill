@@ -1,6 +1,6 @@
 # ai-pcb-design-skill
 
-**Version:** 1.1.0 — 2026-11-20
+**Version:** 1.2.0 — 2026-11-23
 **What it is:** a skill that teaches an AI assistant to design printed
 circuit boards (PCBs) — from a single user prompt to a manufacturable
 board: schematic, layout, DRC checks, KiCad 10+ output and scripts.
@@ -95,6 +95,36 @@ re-opens the dependent stages — their evidence is older than the design.
 **Structural changes need the human:** the model never changes the
 architecture, swaps a chip, or changes the layer count without asking.
 A waiver is human-only, listed explicitly with a reason.
+
+### Reference boards first — prototypes/
+
+Before designing a board similar to one you already know, study a
+real, manufactured board first. The skill ships reference boards in
+`prototypes/` — read `prototypes/README.md` first, then the README of
+the matching board, **before Stage 0**:
+
+- ESP32 board → `prototypes/esp32-evb/` (Olimex ESP32-EVB, Rev L).
+- ATmega / Arduino-compatible board → `prototypes/arduino-uno-r3/`
+  (Arduino UNO R3 official reference design).
+
+**Rules for reference boards:**
+
+- **Pattern, not copy.** Learn how the reference solves power,
+  reset, decoupling, connectors and routing — then apply the pattern
+  to your own spec. Never paste its schematic or layout into your
+  design, and never claim your board "is" the reference board.
+- **Datasheets still win.** A value in a reference design is a hint,
+  not a verified fact. Every pin, value and footprint in your design
+  still has to be verified against its datasheet (§0). If the
+  reference and the datasheet disagree, the datasheet wins — and the
+  disagreement goes into the review report.
+- **Licenses stay with the boards.** The reference boards keep their
+  own licenses (Apache 2.0 for ESP32-EVB, CC BY-SA for Arduino UNO
+  R3). The skill itself stays MIT. Never re-license a reference file
+  as MIT.
+- **If the matching reference board is not in `prototypes/` yet**
+  (its README says the files are pending), say so and continue
+  from the spec and datasheets — do not invent a reference.
 
 ---
 
@@ -487,7 +517,7 @@ corners to manual re-routing:
   byte lane is tuned to its DQS, DQS/CK pairs first, the slower branch
   of a pair grows first, then address/command to CK. Report mismatch
   in **mm and ps**. Meanders as window accordions that account for
-  the net's own copper. (Full DDR length-tuning method is on the v1.1
+  the net's own copper. (Full DDR length-tuning method is on the v1.3
   roadmap — see README.md.)
 - Honest limit: the skill teaches DDR2/DDR3 DIMM/SO-DIMM design and
   routing rules. A working DDR board still needs the memory
@@ -1103,7 +1133,7 @@ fab can build them — EasyEDA is not JLCPCB-only.
 > Realistic scope for v1.0: this skill documents the EasyEDA API path,
 > the bridge setup, the guardrails and the fallback. Full automated
 > EasyEDA layout (a running bridge + the complete command set) is on
-> the v1.1 roadmap (see README.md) — v1.0 does not pretend the bridge
+> the v1.3 roadmap (see README.md) — v1.0 does not pretend the bridge
 > is already wired up.
 
 ---
@@ -1255,11 +1285,12 @@ unparseable file, bad config).
 
 ---
 
-## 13. What v1.1 does NOT cover
+## 13. What v1.2 does NOT cover
 
-v1.1 covers the 13 capabilities (§4), the high-priority methods
-(§6) and the automatic corner fix (§4.4.1). These are on the **v1.2
-roadmap** (see README.md) — the skill does not pretend to do them yet:
+v1.2 covers the 13 capabilities (§4), the high-priority methods
+(§6), the automatic corner fix (§4.4.1) and the reference boards in
+`prototypes/` (§1). These are on the **v1.3 roadmap** (see README.md)
+— the skill does not pretend to do them yet:
 
 - EMC pre-compliance check (44 rules, 18 categories)
 - BOM management + sourcing (stock checks, LCSC/DigiKey/Mouser,

@@ -7,6 +7,17 @@ small scripts do, and a human reviews the result.**
 Standard library only. No installation, no dependencies. Runs on Windows,
 macOS and Linux with Python 3.8+.
 
+**Version:** 1.2.0 — 2026-11-23
+
+## Changelog
+
+### v1.2.0 — 2026-11-23
+
+- No script changes. The release adds `prototypes/` (reference
+  boards) at the repository root — see `README.md` and
+  `SKILL.md` §1, "Reference boards first". The kit scripts
+  themselves are unchanged in this version.
+
 ## Scripts
 
 | Script | What it checks | Input |
