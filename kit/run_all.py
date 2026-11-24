@@ -34,7 +34,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.1"
+VERSION = "1.2.3"
 SCRIPT = "run_all"
 
 
@@ -115,16 +115,19 @@ def main(argv=None):
             print("Note: the example files contain intentional errors, "
                   "so FAIL is the expected result here.")
 
-    print("--- AUDIT LOG ---")
-    print(f"script: {SCRIPT} v{VERSION}")
-    print(f"started: {started} UTC")
-    print(f"kit: {kit_dir}")
+    # Audit log goes to STDERR, never stdout: with --json, stdout must
+    # be parseable JSON only (fixed in v1.2.3).
+    print("--- AUDIT LOG ---", file=sys.stderr)
+    print(f"script: {SCRIPT} v{VERSION}", file=sys.stderr)
+    print(f"started: {started} UTC", file=sys.stderr)
+    print(f"kit: {kit_dir}", file=sys.stderr)
     print(f"inputs: pcb={args.pcb} bom={args.bom} "
-          f"nets={args.nets} spec={args.spec}")
+          f"nets={args.nets} spec={args.spec}", file=sys.stderr)
     for r in results:
-        print(f"  - {r['check']}: {r['result']} (exit {r['exit_code']})")
+        print(f"  - {r['check']}: {r['result']} (exit {r['exit_code']})",
+              file=sys.stderr)
     print(f"result: {'PASS' if worst == 0 else 'FAIL' if worst == 1 else 'SETUP ERROR'} "
-          f"(exit {worst})")
+          f"(exit {worst})", file=sys.stderr)
     return worst
 
 

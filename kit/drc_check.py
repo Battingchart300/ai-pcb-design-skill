@@ -50,7 +50,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.1"
+VERSION = "1.2.3"
 SCRIPT = "drc_check"
 
 # ---------------------------------------------------------------------------
@@ -362,8 +362,22 @@ def _poly_other(poly, other):
 
 
 def rotate(pt, angle_deg):
-    """Rotate a point by angle_deg (KiCad rotation: counter-clockwise
-    in the board's coordinate system)."""
+    """Rotate a point by angle_deg (standard math rotation,
+    counter-clockwise in a Y-up system). Callers pass KiCad angles
+    already negated, because KiCad's board coordinates are Y-down:
+    a positive KiCad angle rotates clockwise in file coordinates.
+
+    Two KiCad conventions this function relies on (both verified
+    2026-11-24 on the Olimex ESP32-EVB, where the old code reported
+    693 false shorts and the fixed code reports 1):
+      1. A footprint's (at x y angle) rotates its pads' POSITIONS
+         by -angle (Y-down sign flip).
+      2. A pad's own (at x y angle) is its ABSOLUTE orientation in
+         board coordinates — KiCad stores it absolute and updates it
+         when the footprint rotates — so a pad SHAPE rotates by
+         -pad_angle alone, NOT by footprint_angle + pad_angle.
+         (The old code used footprint + pad angle and mirrored every
+         rotated rect/oval pad onto its neighbours.)"""
     rad = math.radians(angle_deg)
     cos_a, sin_a = math.cos(rad), math.sin(rad)
     return (pt[0] * cos_a - pt[1] * sin_a,
@@ -588,9 +602,13 @@ def check_board(path, config):
             if not isinstance(net, int) or net == 0:
                 pads_no_net += 1
                 continue
-            rx, ry = rotate((px, py), frot)
+            # KiCad Y-down: footprint angle rotates pad positions
+            # clockwise in file coordinates -> negate (see rotate()).
+            rx, ry = rotate((px, py), -frot)
             cx, cy = fx + rx, fy + ry
-            total_rot = frot + prot
+            # Pad angle is ABSOLUTE in board coordinates (see rotate()):
+            # shape rotation is -prot alone, never frot + prot.
+            total_rot = -prot
             base = {"net": net, "layers": cu_layers,
                     "desc": f"pad '{pad[1]}' on net "
                             f"'{declared.get(net, str(net))}'"}
@@ -926,13 +944,15 @@ def main(argv=None):
         findings, stats, skipped = check_board(board_path, config)
     except SetupError as exc:
         print(f"SETUP ERROR: {exc}", file=sys.stderr)
-        print("--- AUDIT LOG ---")
-        print(f"script: {SCRIPT} v{VERSION}")
-        print(f"started: {started} UTC")
-        print(f"input: {board_path} (not read)")
-        print(f"config: {config_path}")
-        print("checks run: none — setup failed")
-        print("result: SETUP ERROR (exit 2)")
+        # Audit log goes to stderr: with --json, stdout must stay
+        # parseable JSON (v1.2.3 fix, same as the other kit scripts).
+        print("--- AUDIT LOG ---", file=sys.stderr)
+        print(f"script: {SCRIPT} v{VERSION}", file=sys.stderr)
+        print(f"started: {started} UTC", file=sys.stderr)
+        print(f"input: {board_path} (not read)", file=sys.stderr)
+        print(f"config: {config_path}", file=sys.stderr)
+        print("checks run: none — setup failed", file=sys.stderr)
+        print("result: SETUP ERROR (exit 2)", file=sys.stderr)
         return 2
 
     errors = [f for f in findings if f.severity == "error"]
@@ -963,15 +983,17 @@ def main(argv=None):
               f"{stats['clearance_pairs_checked']} clearance pairs checked.")
         print(f"Result: {len(errors)} error(s), {len(warnings)} warning(s).")
 
-    print("--- AUDIT LOG ---")
-    print(f"script: {SCRIPT} v{VERSION}")
-    print(f"started: {started} UTC")
-    print(f"input: {board_path} (sha256 {sha256_of(board_path)[:16]}...)")
-    print(f"config: {config_path} (sha256 {sha256_of(config_path)[:16]}...)")
-    print(f"checks run: {', '.join(checks_run)}")
-    print(f"checks skipped: {'; '.join(skipped) if skipped else 'none'}")
-    print(f"findings: {len(errors)} error(s), {len(warnings)} warning(s)")
-    print(f"result: {'FAIL' if errors else 'PASS'} (exit {1 if errors else 0})")
+    # Audit log goes to stderr: with --json, stdout must stay parseable
+    # JSON (v1.2.3 fix, same as the other kit scripts).
+    print("--- AUDIT LOG ---", file=sys.stderr)
+    print(f"script: {SCRIPT} v{VERSION}", file=sys.stderr)
+    print(f"started: {started} UTC", file=sys.stderr)
+    print(f"input: {board_path} (sha256 {sha256_of(board_path)[:16]}...)", file=sys.stderr)
+    print(f"config: {config_path} (sha256 {sha256_of(config_path)[:16]}...)", file=sys.stderr)
+    print(f"checks run: {', '.join(checks_run)}", file=sys.stderr)
+    print(f"checks skipped: {'; '.join(skipped) if skipped else 'none'}", file=sys.stderr)
+    print(f"findings: {len(errors)} error(s), {len(warnings)} warning(s)", file=sys.stderr)
+    print(f"result: {'FAIL' if errors else 'PASS'} (exit {1 if errors else 0})", file=sys.stderr)
     return 1 if errors else 0
 
 

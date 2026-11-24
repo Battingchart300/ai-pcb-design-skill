@@ -5,7 +5,8 @@ The IPC-2221 formula (1 oz = 35 um = 1.37 mil copper):
 
     I = k * dT^0.44 * A^0.725        A = width * thickness  (in mil^2)
     k = 0.048 for external layers, 0.024 for internal layers
-    (an internal trace needs ~2x the width for the same current)
+    (an internal trace needs ~2.6x the width for the same current:
+    (0.048 / 0.024)^(1/0.725) = 2^1.38 = 2.60 — see SKILL.md §5.2)
 
 Solved for width:  A = (I / (k * dT^0.44)) ^ (1 / 0.725)
 
@@ -38,7 +39,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.1"
+VERSION = "1.2.3"
 SCRIPT = "trace_width"
 
 MIL_PER_MM = 1.0 / 0.0254          # 1 mm = 39.3701 mil
@@ -47,8 +48,12 @@ K_EXTERNAL = 0.048
 K_INTERNAL = 0.024
 
 # Reference values (IPC-2221, 1 oz, external, dT = 10 C) — used by --table
-# and as a sanity cross-check of the formula.
-REFERENCE_MM = {0.5: 0.12, 1.0: 0.30, 2.0: 0.79, 3.0: 1.40, 5.0: 2.50, 10.0: 7.20}
+# and as a sanity cross-check of the formula. These values are GENERATED
+# from required_width_mm() below (rounded to 2 decimals), never typed
+# from a table by hand: a hand-typed 2.50 mm for 5 A was wrong — the
+# formula gives 2.78 mm (fixed in v1.2.3). If you change the formula,
+# regenerate this dict and check --table shows reference == formula.
+REFERENCE_MM = {0.5: 0.12, 1.0: 0.30, 2.0: 0.79, 3.0: 1.37, 5.0: 2.78, 10.0: 7.24}
 
 
 def required_width_mm(current_a, copper_oz=1.0, layer="external", delta_t_c=10.0):
@@ -71,15 +76,19 @@ def verdict(required_mm, actual_mm):
 
 
 def print_audit_log(started, what, rows, failures):
-    print("--- AUDIT LOG ---")
-    print(f"script: {SCRIPT} v{VERSION}")
-    print(f"started: {started} UTC")
-    print(f"input: {what}")
-    print(f"method: IPC-2221, formula I = k * dT^0.44 * A^0.725")
+    # Audit log goes to STDERR, never stdout: with --json, stdout must
+    # be parseable JSON only (fixed in v1.2.3 — the log used to be
+    # appended after the JSON, which broke every JSON consumer).
+    print("--- AUDIT LOG ---", file=sys.stderr)
+    print(f"script: {SCRIPT} v{VERSION}", file=sys.stderr)
+    print(f"started: {started} UTC", file=sys.stderr)
+    print(f"input: {what}", file=sys.stderr)
+    print("method: IPC-2221, formula I = k * dT^0.44 * A^0.725", file=sys.stderr)
     for row in rows:
-        print(f"  - {row}")
-    print(f"failures: {failures}")
-    print(f"result: {'FAIL' if failures else 'PASS'} (exit {1 if failures else 0})")
+        print(f"  - {row}", file=sys.stderr)
+    print(f"failures: {failures}", file=sys.stderr)
+    print(f"result: {'FAIL' if failures else 'PASS'} (exit {1 if failures else 0})",
+          file=sys.stderr)
 
 
 def main(argv=None):
@@ -108,7 +117,7 @@ def main(argv=None):
             print(f"{current:>7.1f} A  {width:>12.2f} mm  "
                   f"(formula: {calc:.2f} mm)  {note}")
         print()
-        print("Note: internal layers need ~2x the width. "
+        print("Note: internal layers need ~2.6x the width. "
               "Add 15-25% margin in real designs.")
         print_audit_log(started, "--table (reference values)",
                         ["printed IPC-2221 reference table"], 0)

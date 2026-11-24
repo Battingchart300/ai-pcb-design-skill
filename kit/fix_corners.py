@@ -30,12 +30,25 @@ After fixing, always re-run drc_check.py on the output: the corner-90
 warnings must be 0. A human reviews the result before the board is
 used (the fix is a proposal, not a proof).
 
+Regression check (new in v1.2.3): after writing the fixed board, this
+script runs drc_check.py on the input AND on the output and compares
+the error counts. A chamfer can create a new clearance error even
+while it removes a corner — on the example board the DRC errors went
+14 -> 15 after a fix. If the output has MORE errors than the input,
+the script prints a loud REGRESSION WARNING, keeps the .bak backup
+(--in-place) or the untouched input (default mode), and exits 1.
+It never silently claims an improvement. With --dry-run there is no
+output file, so the regression check is skipped; if drc_check.py is
+missing, the check is skipped with a note.
+
 Usage:
     python fix_corners.py board.kicad_pcb [--config config.json]
                          [--output fixed.kicad_pcb] [--in-place] [--dry-run]
+                         [--json]
 
-Exit codes: 0 = fixed, or nothing to fix; 1 = parse error;
-2 = setup missing (file not found, unparseable file, bad config).
+Exit codes: 0 = fixed, or nothing to fix; 1 = parse error, or the fix
+made the board worse (regression — see the warning); 2 = setup
+missing (file not found, unparseable file, bad config).
 
 Standard library only. Works on Windows, macOS and Linux.
 """
@@ -45,12 +58,13 @@ import hashlib
 import json
 import math
 import re
+import subprocess
 import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.1"
+VERSION = "1.2.3"
 SCRIPT = "fix_corners"
 
 MIN_CHAMFER_MM = 0.05  # a chamfer shorter than this is not worth cutting
@@ -511,6 +525,25 @@ def sha256_text(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def drc_error_counts(path):
+    """Run drc_check.py on `path` and return (errors, warnings), or None
+    if drc_check.py is missing, times out, or its output cannot be
+    parsed. Used only for the post-fix regression check."""
+    drc = Path(__file__).resolve().parent / "drc_check.py"
+    if not drc.is_file():
+        return None
+    try:
+        proc = subprocess.run([sys.executable, str(drc), str(path)],
+                              capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    m = re.search(r"findings: (\d+) error\(s\), (\d+) warning\(s\)",
+                  proc.stdout + proc.stderr)
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Chamfer 90-degree trace corners to 45 degrees in a "
@@ -524,6 +557,8 @@ def main(argv=None):
                     help="overwrite the input file (writes <name>.bak backup first)")
     ap.add_argument("--dry-run", action="store_true",
                     help="print what would change, write nothing")
+    ap.add_argument("--json", action="store_true",
+                    help="print the summary as JSON (audit log goes to stderr)")
     args = ap.parse_args(argv)
 
     board_path = Path(args.board)
@@ -554,48 +589,25 @@ def main(argv=None):
         fixed_text, report = fix_board(board_path, config)
     except ParseError as exc:
         print(f"PARSE ERROR: {exc}", file=sys.stderr)
-        print("--- AUDIT LOG ---")
-        print(f"script: {SCRIPT} v{VERSION}")
-        print(f"started: {started} UTC")
-        print(f"input: {board_path} (not fixed)")
-        print(f"config: {config_path}")
-        print("result: PARSE ERROR (exit 1)")
+        print("--- AUDIT LOG ---", file=sys.stderr)
+        print(f"script: {SCRIPT} v{VERSION}", file=sys.stderr)
+        print(f"started: {started} UTC", file=sys.stderr)
+        print(f"input: {board_path} (not fixed)", file=sys.stderr)
+        print(f"config: {config_path}", file=sys.stderr)
+        print("result: PARSE ERROR (exit 1)", file=sys.stderr)
         return 1
     except SetupError as exc:
         print(f"SETUP ERROR: {exc}", file=sys.stderr)
-        print("--- AUDIT LOG ---")
-        print(f"script: {SCRIPT} v{VERSION}")
-        print(f"started: {started} UTC")
-        print(f"input: {board_path} (not read)")
-        print(f"config: {config_path}")
-        print("result: SETUP ERROR (exit 2)")
+        print("--- AUDIT LOG ---", file=sys.stderr)
+        print(f"script: {SCRIPT} v{VERSION}", file=sys.stderr)
+        print(f"started: {started} UTC", file=sys.stderr)
+        print(f"input: {board_path} (not read)", file=sys.stderr)
+        print(f"config: {config_path}", file=sys.stderr)
+        print("result: SETUP ERROR (exit 2)", file=sys.stderr)
         return 2
 
     fixed_count = len(report["fixed"])
     acute_count = len(report["acute"])
-
-    if report.get("disabled"):
-        print("Corner fix is DISABLED in config.json (corner_fix.enabled "
-              "= false) — nothing was changed.")
-    elif fixed_count:
-        for net_name, vertex, chamfer in report["fixed"]:
-            print(f"FIXED   corner-90 on net '{net_name}' at "
-                  f"({vertex[0]:.2f}, {vertex[1]:.2f}) — "
-                  f"chamfer {chamfer:.2f} mm")
-    else:
-        print("No 90-degree corners to fix.")
-    for net_name, vertex, angle in report["acute"]:
-        print(f"MANUAL  acute corner ({angle:.0f} degrees) on net "
-              f"'{net_name}' at ({vertex[0]:.2f}, {vertex[1]:.2f}) — "
-              "fix by hand, the script does not touch acute angles")
-    for net_name, vertex in report["skipped_short"]:
-        print(f"MANUAL  corner on net '{net_name}' at "
-              f"({vertex[0]:.2f}, {vertex[1]:.2f}) — segment too short "
-              "to chamfer, fix by hand")
-    for net_name, vertex in report["ambiguous"]:
-        print(f"MANUAL  vertex on net '{net_name}' at "
-              f"({vertex[0]:.2f}, {vertex[1]:.2f}) — 3+ segments meet "
-              "here, fix by hand")
 
     wrote = None
     backup = None
@@ -612,40 +624,122 @@ def main(argv=None):
         else:
             # Nothing to fix: do not touch the input, write no output.
             wrote = None
-    if dry_run:
-        print(f"\nDRY RUN — would fix {fixed_count} corner(s), "
-              f"write to: {out_path}")
 
-    print()
-    print(f"Corners fixed: {fixed_count}")
-    if fixed_count:
-        per_net = {}
-        for net_name, _vertex, _ch in report["fixed"]:
-            per_net[net_name] = per_net.get(net_name, 0) + 1
-        print("Fixed per net: " + ", ".join(
-            f"{name}: {count}" for name, count in sorted(per_net.items())))
-    print(f"Acute corners reported (manual): {acute_count}")
-
-    print("--- AUDIT LOG ---")
-    print(f"script: {SCRIPT} v{VERSION}")
-    print(f"started: {started} UTC")
-    print(f"input: {board_path} (sha256 {input_sha[:16]}...)")
-    print(f"config: {config_path} (sha256 {sha256_of(config_path)[:16]}...)")
+    # --- regression check: did the fix make the board worse? ------------
+    # Compare drc_check error counts on the input vs the output. Only
+    # when something was actually written; dry-run and "nothing to fix"
+    # have no output to compare. Warnings are not compared: fixing a
+    # corner legitimately removes corner-90 warnings.
+    regression = None  # None = skipped, True = worse, False = not worse
+    regression_detail = ""
     if wrote is not None:
-        print(f"output: {wrote} (sha256 {sha256_text(fixed_text)[:16]}...)")
-        if backup is not None:
-            print(f"backup: {backup} (sha256 {sha256_of(backup)[:16]}...)")
+        before = drc_error_counts(board_path)
+        after = drc_error_counts(wrote)
+        if before is None or after is None:
+            regression_detail = ("regression check skipped "
+                                 "(drc_check.py not available or unreadable)")
+        else:
+            regression = after[0] > before[0]
+            regression_detail = (f"DRC errors before: {before[0]}, after: "
+                                 f"{after[0]} (warnings {before[1]} -> "
+                                 f"{after[1]})")
     elif dry_run:
-        print("output: none (dry run)")
+        regression_detail = "regression check skipped (dry run — no output file)"
+
+    exit_code = 0
+    result_text = "FIXED" if fixed_count else "NO CHANGE"
+    if regression:
+        exit_code = 1
+        result_text = "FIXED WITH REGRESSION"
+        warn = (f"REGRESSION WARNING: the corner fix made the board "
+                f"WORSE — {regression_detail}. Do NOT use the output "
+                f"as-is; the original is kept"
+                + (f" in {backup}" if backup is not None
+                   else " (the input file was not touched)")
+                + ". Review the new DRC errors and fix them by hand.")
+        print(warn, file=sys.stderr)
+        if not args.json:
+            # In --json mode stdout must stay pure JSON; stderr carries it.
+            print(warn)
+
+    if args.json:
+        print(json.dumps({
+            "script": SCRIPT, "version": VERSION,
+            "input": str(board_path),
+            "output": str(wrote) if wrote is not None else None,
+            "backup": str(backup) if backup is not None else None,
+            "dry_run": dry_run,
+            "corners_fixed": fixed_count,
+            "acute_corners": acute_count,
+            "skipped_short": len(report["skipped_short"]),
+            "ambiguous": len(report["ambiguous"]),
+            "segments_total": report["segments_total"],
+            "regression": regression,
+            "regression_detail": regression_detail,
+            "result": result_text,
+        }, indent=2))
     else:
-        print("output: none (nothing to fix)")
-    print(f"segments in file: {report['segments_total']}")
-    print(f"corners fixed: {fixed_count}")
-    print(f"acute corners (manual): {acute_count}")
-    print(f"skipped (too short): {len(report['skipped_short'])}")
-    print(f"ambiguous vertices (manual): {len(report['ambiguous'])}")
-    print(f"result: {'FIXED' if fixed_count else 'NO CHANGE'} (exit 0)")
-    return 0
+        if report.get("disabled"):
+            print("Corner fix is DISABLED in config.json (corner_fix.enabled "
+                  "= false) — nothing was changed.")
+        elif fixed_count:
+            for net_name, vertex, chamfer in report["fixed"]:
+                print(f"FIXED   corner-90 on net '{net_name}' at "
+                      f"({vertex[0]:.2f}, {vertex[1]:.2f}) — "
+                      f"chamfer {chamfer:.2f} mm")
+        else:
+            print("No 90-degree corners to fix.")
+        for net_name, vertex, angle in report["acute"]:
+            print(f"MANUAL  acute corner ({angle:.0f} degrees) on net "
+                  f"'{net_name}' at ({vertex[0]:.2f}, {vertex[1]:.2f}) — "
+                  "fix by hand, the script does not touch acute angles")
+        for net_name, vertex in report["skipped_short"]:
+            print(f"MANUAL  corner on net '{net_name}' at "
+                  f"({vertex[0]:.2f}, {vertex[1]:.2f}) — segment too short "
+                  "to chamfer, fix by hand")
+        for net_name, vertex in report["ambiguous"]:
+            print(f"MANUAL  vertex on net '{net_name}' at "
+                  f"({vertex[0]:.2f}, {vertex[1]:.2f}) — 3+ segments meet "
+                  "here, fix by hand")
+        if dry_run:
+            print(f"\nDRY RUN — would fix {fixed_count} corner(s), "
+                  f"write to: {out_path}")
+        print()
+        print(f"Corners fixed: {fixed_count}")
+        if fixed_count:
+            per_net = {}
+            for net_name, _vertex, _ch in report["fixed"]:
+                per_net[net_name] = per_net.get(net_name, 0) + 1
+            print("Fixed per net: " + ", ".join(
+                f"{name}: {count}" for name, count in sorted(per_net.items())))
+        print(f"Acute corners reported (manual): {acute_count}")
+        if regression_detail:
+            print(f"Regression check: {regression_detail}")
+
+    # Audit log goes to STDERR, never stdout: with --json, stdout must
+    # be parseable JSON only (fixed in v1.2.3).
+    print("--- AUDIT LOG ---", file=sys.stderr)
+    print(f"script: {SCRIPT} v{VERSION}", file=sys.stderr)
+    print(f"started: {started} UTC", file=sys.stderr)
+    print(f"input: {board_path} (sha256 {input_sha[:16]}...)", file=sys.stderr)
+    print(f"config: {config_path} (sha256 {sha256_of(config_path)[:16]}...)", file=sys.stderr)
+    if wrote is not None:
+        print(f"output: {wrote} (sha256 {sha256_text(fixed_text)[:16]}...)", file=sys.stderr)
+        if backup is not None:
+            print(f"backup: {backup} (sha256 {sha256_of(backup)[:16]}...)", file=sys.stderr)
+    elif dry_run:
+        print("output: none (dry run)", file=sys.stderr)
+    else:
+        print("output: none (nothing to fix)", file=sys.stderr)
+    print(f"segments in file: {report['segments_total']}", file=sys.stderr)
+    print(f"corners fixed: {fixed_count}", file=sys.stderr)
+    print(f"acute corners (manual): {acute_count}", file=sys.stderr)
+    print(f"skipped (too short): {len(report['skipped_short'])}", file=sys.stderr)
+    print(f"ambiguous vertices (manual): {len(report['ambiguous'])}", file=sys.stderr)
+    if regression_detail:
+        print(f"regression check: {regression_detail}", file=sys.stderr)
+    print(f"result: {result_text} (exit {exit_code})", file=sys.stderr)
+    return exit_code
 
 
 if __name__ == "__main__":

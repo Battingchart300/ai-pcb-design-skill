@@ -35,7 +35,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.1"
+VERSION = "1.2.3"
 SCRIPT = "bom_check"
 
 REF_PATTERN = re.compile(r"^[A-Z]{1,3}\d+$")
@@ -54,6 +54,8 @@ class SetupError(Exception):
 def check_bom(path, config):
     """Run all checks. Returns (findings, stats, skipped)."""
     bom_cfg = config.get("bom", {})
+    if not isinstance(bom_cfg, dict):
+        raise SetupError("config 'bom' section must be an object")
     require_mpn = bool(bom_cfg.get("require_mpn", True))
     require_footprint = bool(bom_cfg.get("require_footprint", True))
     fab = str(config.get("fab", "jlcpcb")).lower()
@@ -198,17 +200,22 @@ def main(argv=None):
             raise SetupError(f"BOM file not found: {bom_path}")
         if not config_path.is_file():
             raise SetupError(f"config file not found: {config_path}")
-        config = json.loads(config_path.read_text(encoding="utf-8"))
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (ValueError, OSError) as exc:
+            raise SetupError(f"config is not valid JSON: {exc}")
+        if not isinstance(config, dict):
+            raise SetupError("config must be a JSON object")
         findings, stats, skipped = check_bom(bom_path, config)
     except SetupError as exc:
         print(f"SETUP ERROR: {exc}", file=sys.stderr)
-        print("--- AUDIT LOG ---")
-        print(f"script: {SCRIPT} v{VERSION}")
-        print(f"started: {started} UTC")
-        print(f"input: {bom_path} (not read)")
-        print(f"config: {config_path}")
-        print("checks run: none — setup failed")
-        print("result: SETUP ERROR (exit 2)")
+        print("--- AUDIT LOG ---", file=sys.stderr)
+        print(f"script: {SCRIPT} v{VERSION}", file=sys.stderr)
+        print(f"started: {started} UTC", file=sys.stderr)
+        print(f"input: {bom_path} (not read)", file=sys.stderr)
+        print(f"config: {config_path}", file=sys.stderr)
+        print("checks run: none — setup failed", file=sys.stderr)
+        print("result: SETUP ERROR (exit 2)", file=sys.stderr)
         return 2
 
     errors = [f for f in findings if f["severity"] == "error"]
@@ -234,16 +241,20 @@ def main(argv=None):
         print(f"BOM: {stats['rows']} row(s), {stats['parts_total']} part(s) in total.")
         print(f"Result: {len(errors)} error(s), {len(warnings)} warning(s).")
 
-    print("--- AUDIT LOG ---")
-    print(f"script: {SCRIPT} v{VERSION}")
-    print(f"started: {started} UTC")
-    print(f"input: {bom_path} (sha256 {sha256_of(bom_path)[:16]}...)")
-    print(f"config: {config_path} (sha256 {sha256_of(config_path)[:16]}...)")
+    # Audit log goes to STDERR, never stdout: with --json, stdout must
+    # be parseable JSON only (fixed in v1.2.3).
+    print("--- AUDIT LOG ---", file=sys.stderr)
+    print(f"script: {SCRIPT} v{VERSION}", file=sys.stderr)
+    print(f"started: {started} UTC", file=sys.stderr)
+    print(f"input: {bom_path} (sha256 {sha256_of(bom_path)[:16]}...)", file=sys.stderr)
+    print(f"config: {config_path} (sha256 {sha256_of(config_path)[:16]}...)", file=sys.stderr)
     print("checks run: missing-mpn, missing-footprint, missing-value, "
-          "duplicate-reference, quantity-mismatch, reference-format, missing-lcsc")
-    print(f"checks skipped: {'; '.join(skipped) if skipped else 'none'}")
-    print(f"findings: {len(errors)} error(s), {len(warnings)} warning(s)")
-    print(f"result: {'FAIL' if errors else 'PASS'} (exit {1 if errors else 0})")
+          "duplicate-reference, quantity-mismatch, reference-format, missing-lcsc",
+          file=sys.stderr)
+    print(f"checks skipped: {'; '.join(skipped) if skipped else 'none'}", file=sys.stderr)
+    print(f"findings: {len(errors)} error(s), {len(warnings)} warning(s)", file=sys.stderr)
+    print(f"result: {'FAIL' if errors else 'PASS'} (exit {1 if errors else 0})",
+          file=sys.stderr)
     return 1 if errors else 0
 
 

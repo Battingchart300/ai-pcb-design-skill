@@ -7,9 +7,66 @@ small scripts do, and a human reviews the result.**
 Standard library only. No installation, no dependencies. Runs on Windows,
 macOS and Linux with Python 3.8+.
 
-**Version:** 1.2.2 — 2026-11-24
+**Version:** 1.2.3 — 2026-11-24
 
 ## Changelog
+
+### v1.2.3 — 2026-11-24
+
+Review fixes (Claude AI + ChatGPT reviews of v1.2.2):
+
+- **`drc_check.py` rotation fix**: pin/footprint rotation was computed
+  wrong (KiCad Y-down, position −frot, shape −prot). On the Olimex
+  ESP32-EVB reference board it reported 693 false shorts; after the
+  fix the EVB has **1 real short** (pad 1 on `+5V` touches pad 2 on
+  `Net-(U6-VDD)`). New example `examples/sample_rotated.kicad_pcb`
+  (a rotated footprint, planted to catch this bug) passes **0 / 0**.
+  The 14 / 5 example numbers are unchanged.
+- **`trace_width.py`**: internal-layer factor corrected to **~2.6×**
+  (was "~2×" in the docstring and the `--table` note, while SKILL.md
+  §5.2 already proved 2.6× from the IPC-2221 formula). The 5 A
+  reference-table entry corrected to **2.78 mm** (was 2.50 mm — the
+  formula gives 2.78 mm; the other entries already matched). The
+  table is now generated from the formula, so the two cannot drift
+  apart again.
+- **`--json` is valid JSON everywhere it exists**: the audit log moved
+  to **stderr** in `bom_check.py`, `rules_check.py`,
+  `trace_width.py`, `fix_corners.py` (new `--json` mode) and
+  `run_all.py`, so stdout with `--json` is parseable JSON only
+  (verified with `python -m json.tool` on each script).
+  **Exception: `drc_check.py`** — its audit log is still printed to
+  stdout after the JSON, so its `--json` output is still not
+  parseable. That file was not touched in v1.2.3 (rotation fix only);
+  the same one-line move is still to do there.
+- **`rules_check.py` (new checks 10 and 11)**: a pin referenced by a
+  net / `no_connect` / a power pin that is not in the part's declared
+  pin list is an error (`unknown-pin` — e.g. U1.99 on a QFN-56);
+  a 3-layer board is an error (`forbidden-layer-count`, config
+  `layers.forbidden_counts`) and any other count outside
+  `layers.allowed_counts` is an error (`unsupported-layer-count`).
+  Bad spec data is now reported as a clean error instead of crashing:
+  spec not an object, parts/nets entries not objects, `no_connect`
+  not a list, non-text net names, non-numeric / NaN values
+  (`layers: NaN` → `layers-not-a-number`), bad config values —
+  exit 1 for a bad spec, exit 2 for setup (missing file, invalid
+  JSON, bad config). Structural spec problems that used to raise
+  `SetupError` (no `parts` / `nets` list) are now error findings
+  (exit 1) — only file/config problems are exit 2.
+  The example `spec.json` itself had a latent inconsistency the new
+  check caught (net SCL used U2.4 while U2 declared only pins 1–3)
+  — U2 now declares pins 1–4; the documented 1 error / 3 warnings
+  are unchanged.
+- **`fix_corners.py`**: post-fix **regression check** — after writing
+  the fixed board it runs `drc_check.py` on the input and the output
+  and compares error counts. On the example board the fix takes DRC
+  from 14 to 15 errors, so the script now prints a loud REGRESSION
+  WARNING, keeps the `.bak` / untouched input, and exits 1 instead of
+  silently claiming an improvement. The +1 is a counting effect, not
+  a new physical defect: the chamfer splits one 0.12 mm CANH trace
+  into three segments and the per-segment trace-width check counts
+  each one (the corner-90 warning does disappear). New `--json` mode
+  (`--dry-run` skips the regression check — no output file to compare;
+  if `drc_check.py` is missing the check is skipped with a note).
 
 ### v1.2.2 — 2026-11-24
 
@@ -63,8 +120,8 @@ macOS and Linux with Python 3.8+.
 | `drc_check.py` | Unrouted nets, trace width, via drill/pad, annular ring, 90° corners, copper-to-edge, clearance and shorts (different nets, same layer) | `.kicad_pcb` file |
 | `bom_check.py` | Missing MPN / footprint / value, duplicate reference, quantity mismatch, missing LCSC | BOM `.csv` |
 | `trace_width.py` | IPC-2221 trace width for a current (single value, table, or a CSV of nets) | flags / `.csv` |
-| `rules_check.py` | Spec-first lint: pin on two nets, unknown reference, unconnected power pin, missing decoupling / bulk cap, I2C without pull-up, single-pin net | `spec.json` |
-| `fix_corners.py` | **Fixer, not a checker:** chamfers 90° corners to 45° in a `.kicad_pcb` — writes `<name>.fixed.kicad_pcb` by default; `--in-place` only with a `.bak` backup; `--dry-run` changes nothing; acute angles are reported, never fixed | `.kicad_pcb` file |
+| `rules_check.py` | Spec-first lint: pin on two nets, unknown reference, pin not in the part's pin list, unconnected power pin, forbidden 3-layer board / unsupported layer count, missing decoupling / bulk cap, I2C without pull-up, single-pin net | `spec.json` |
+| `fix_corners.py` | **Fixer, not a checker:** chamfers 90° corners to 45° in a `.kicad_pcb` — writes `<name>.fixed.kicad_pcb` by default; `--in-place` only with a `.bak` backup; `--dry-run` changes nothing; acute angles are reported, never fixed. Post-fix regression check (v1.2.3): DRC errors before vs after — warns loudly and exits 1 if the fix made the board worse | `.kicad_pcb` file |
 | `run_all.py` | Runs all four checks on the example files (or on your files with `--pcb` / `--bom` / `--nets` / `--spec`) and prints one summary | — |
 
 ## Usage
@@ -104,8 +161,18 @@ input only after writing a `<name>.bak` backup. After fixing, always
 re-run `drc_check.py` on the output: the `corner-90` warnings must
 be 0.
 
-Add `--json` to any checker to get machine-readable output
-(`fix_corners.py` has no `--json` — it prints the audit log only).
+**Regression check (v1.2.3):** `fix_corners.py` runs `drc_check.py`
+on the input and on the output and compares the error counts. If the
+output has more errors than the input it prints a loud REGRESSION
+WARNING, keeps the `.bak` (or the untouched input), and exits 1.
+Warnings are not compared — fixing a corner legitimately removes
+`corner-90` warnings. With `--dry-run` the check is skipped (no
+output file exists yet).
+
+Add `--json` to any script to get machine-readable output on stdout;
+the audit log goes to stderr, so the JSON parses cleanly. (One
+exception: `drc_check.py` still prints its audit log to stdout after
+the JSON — its `--json` output does not parse yet.)
 
 ## Exit codes
 
@@ -114,7 +181,8 @@ Add `--json` to any checker to get machine-readable output
 - `2` — setup missing (file not found, unparseable file, bad config)
 
 `fix_corners.py` differs: `0` = fixed, or nothing to fix; `1` = parse
-error; `2` = setup missing (file not found, bad config).
+error, or the fix made the board worse (regression — see the warning);
+`2` = setup missing (file not found, bad config).
 
 ## Audit log
 
@@ -122,7 +190,9 @@ Every script prints an audit log at the end: script name and version,
 start time, input file with SHA-256, config file with SHA-256, checks
 that ran, checks that were skipped and why, finding counts, and the
 final result. The log is the proof the check ran — the skill must never
-claim a check passed if it did not run.
+claim a check passed if it did not run. Since v1.2.3 the audit log
+goes to **stderr** (except `drc_check.py`, still stdout — see the
+changelog), so `--json` output on stdout parses cleanly.
 
 ## config.json
 
@@ -173,7 +243,15 @@ what the checks catch). The expected result for each is FAIL:
   (110, 102), chamfer 0.50 mm) → writes `sample.fixed.kicad_pcb`.
   `drc_check.py` on the fixed file reports **0 `corner-90` warnings**
   (the other intentional errors in the sample remain — the fixer only
-  fixes corners, nothing else).
+  fixes corners, nothing else) — but **15 errors, 1 warning** in
+  total (was 14 / 2): the chamfer splits one undersized CANH trace
+  into three segments and the per-segment trace-width check counts
+  each one. `fix_corners.py` flags this with a REGRESSION WARNING
+  and exits 1 (v1.2.3).
+- `sample_rotated.kicad_pcb` → `drc_check.py`: **0 errors,
+  0 warnings** — a rotated footprint that must NOT be reported as
+  shorted (regression test for the v1.2.3 rotation fix; before the
+  fix, rotated pads produced false shorts).
 
 ## What the kit does NOT do
 

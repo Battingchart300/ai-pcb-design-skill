@@ -29,14 +29,23 @@ Checks (the spec-first lint from the skill):
   7. SDA/SCL (I2C) net without a pull-up resistor to a rail. WARNING.
   8. Single-pin net — usually a typo in the net name. WARNING.
   9. Pin declared in a part's pin list but in no net and not no-connect. WARNING.
+ 10. Layer count — a 3-layer board is forbidden (config
+     layers.forbidden_counts); any count outside layers.allowed_counts
+     is an error too. ERROR. (New in v1.2.3.)
+ 11. Unknown pin — a pin referenced by a net, by no_connect or by a
+     power pin that is not in the part's declared pin list
+     (e.g. U1.99 on a QFN-56 with pins 1-56). ERROR. (New in v1.2.3.)
 
 A value like "10uF", "100nF" or "4.7u" is parsed as a capacitance in uF.
 
 Usage:
     python rules_check.py spec.json [--config config.json] [--json]
 
-Exit codes: 0 = pass (warnings allowed), 1 = fail (at least one error),
-2 = setup missing (file not found, invalid JSON, bad config).
+Exit codes: 0 = pass (warnings allowed), 1 = fail (at least one error —
+including a malformed spec: wrong types, non-numeric values, NaN),
+2 = setup missing (file not found, invalid JSON syntax, bad config).
+A bad spec never crashes with a Python traceback: every structural
+problem is reported as a clean error finding (exit 1).
 
 Standard library only. Works on Windows, macOS and Linux.
 """
@@ -44,12 +53,13 @@ Standard library only. Works on Windows, macOS and Linux.
 import argparse
 import hashlib
 import json
+import math
 import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.2"
+VERSION = "1.2.3"
 SCRIPT = "rules_check"
 
 CAP_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([unp]?)[fF]\s*$", re.IGNORECASE)
@@ -87,27 +97,89 @@ class SetupError(Exception):
 
 
 def check_spec(spec, config):
-    """Run all checks. Returns (findings, stats, skipped)."""
+    """Run all checks. Returns (findings, stats, skipped).
+
+    Structural problems in the SPEC (wrong JSON types, non-numeric
+    values, NaN, strings where lists belong) are reported as error
+    findings (exit 1) — never a Python traceback. Only file/config
+    problems raise SetupError (exit 2)."""
+    if not isinstance(config, dict):
+        raise SetupError("config must be a JSON object")
     power_cfg = config.get("power", {})
-    bulk_min_uf = float(power_cfg.get("bulk_cap_min_uf", 10))
+    if not isinstance(power_cfg, dict):
+        raise SetupError("config 'power' section must be an object")
+    try:
+        bulk_min_uf = float(power_cfg.get("bulk_cap_min_uf", 10))
+    except (TypeError, ValueError):
+        raise SetupError("config power.bulk_cap_min_uf must be a number")
+    if not math.isfinite(bulk_min_uf):
+        raise SetupError("config power.bulk_cap_min_uf must be finite (not NaN/inf)")
+    layers_cfg = config.get("layers", {})
+    if not isinstance(layers_cfg, dict):
+        raise SetupError("config 'layers' section must be an object")
+    allowed_counts = layers_cfg.get("allowed_counts", [1, 2, 4, 6, 8])
+    forbidden_counts = layers_cfg.get("forbidden_counts", [3])
+
     findings = []
     skipped = []
+    stats = {"parts": 0, "nets": 0, "pins_in_nets": 0}
 
+    # --- structural guards: a bad spec is an error, not a crash ---------
+    if not isinstance(spec, dict):
+        findings.append({"severity": "error", "check": "spec-not-an-object",
+                         "message": "spec must be a JSON object with "
+                                    "'parts' and 'nets' lists",
+                         "location": ""})
+        return findings, stats, skipped
     parts_list = spec.get("parts")
     nets_list = spec.get("nets")
     if not isinstance(parts_list, list) or not parts_list:
-        raise SetupError("spec has no 'parts' list (or it is empty)")
+        findings.append({"severity": "error", "check": "spec-no-parts",
+                         "message": "spec has no 'parts' list (or it is "
+                                    "empty) — a spec needs at least one part",
+                         "location": ""})
+        return findings, stats, skipped
     if not isinstance(nets_list, list):
-        raise SetupError("spec has no 'nets' list")
-    no_connect = set(spec.get("no_connect") or [])
+        findings.append({"severity": "error", "check": "spec-no-nets",
+                         "message": "spec has no 'nets' list — a spec "
+                                    "needs a 'nets' list (use [] if the "
+                                    "board really has no nets yet)",
+                         "location": ""})
+        return findings, stats, skipped
+    no_connect_raw = spec.get("no_connect")
+    if no_connect_raw is None:
+        no_connect = set()
+    elif isinstance(no_connect_raw, list):
+        no_connect = {p for p in no_connect_raw if isinstance(p, str)}
+        if any(not isinstance(p, str) for p in no_connect_raw):
+            findings.append({"severity": "error", "check": "no-connect-not-a-pin",
+                             "message": "no_connect has entries that are "
+                                        "not pin references (REF.NUM) — "
+                                        "every entry must be a string like "
+                                        "\"U1.8\"",
+                             "location": ""})
+    else:
+        findings.append({"severity": "error", "check": "no-connect-not-a-list",
+                         "message": "spec 'no_connect' must be a list of "
+                                    "pin references, not text or a number",
+                         "location": ""})
+        no_connect = set()
 
     parts = {}
     for part in parts_list:
+        if not isinstance(part, dict):
+            findings.append({"severity": "error", "check": "part-not-an-object",
+                             "message": "a parts entry is not an object — "
+                                        "every part must be {\"ref\", "
+                                        "\"value\", \"footprint\", ...}",
+                             "location": ""})
+            continue
         ref = part.get("ref")
-        if not ref:
+        if not isinstance(ref, str) or not ref:
             findings.append({"severity": "error", "check": "part-no-ref",
-                             "message": "a part has no 'ref' — every part "
-                                        "needs a designator",
+                             "message": "a part has no 'ref' (or a "
+                                        "non-text ref) — every part needs "
+                                        "a designator string",
                              "location": ""})
             continue
         if ref in parts:
@@ -124,6 +196,8 @@ def check_spec(spec, config):
     # later checks do not double-count it.
     PIN_NUM_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
     for part in parts_list:
+        if not isinstance(part, dict):
+            continue  # already reported once above as part-not-an-object
         ref = part.get("ref") or "?"
         for field in ("pins", "power_pins"):
             value = part.get(field)
@@ -149,6 +223,13 @@ def check_spec(spec, config):
                                                 f"until it is verified",
                                      "location": f"part {ref}"})
     for net in nets_list:
+        if not isinstance(net, dict):
+            findings.append({"severity": "error", "check": "net-not-an-object",
+                             "message": "a nets entry is not an object — "
+                                        "every net must be {\"name\", "
+                                        "\"pins\": [...]}",
+                             "location": ""})
+            continue
         value = net.get("pins")
         if value is not None and not isinstance(value, list):
             findings.append({"severity": "error", "check": "net-pins-not-a-list",
@@ -164,10 +245,17 @@ def check_spec(spec, config):
     pin_to_nets = {}   # "U1.3" -> [net names]
     net_names = []
     for net in nets_list:
+        if not isinstance(net, dict):
+            continue  # already reported once above as net-not-an-object
         name = net.get("name", "")
+        if not isinstance(name, str):
+            # A non-text net name would crash ', '.join() below — coerce.
+            name = "" if name is None else str(name)
         pins = _pin_list(net.get("pins")) or []
         net_names.append(name)
         for pin in pins:
+            if not isinstance(pin, str):
+                continue  # already reported by check 0 as pins-not-a-number
             pin_to_nets.setdefault(pin, []).append(name)
 
     # --- check 1: pin on two nets (a short) --------------------------------
@@ -201,6 +289,87 @@ def check_spec(spec, config):
                              "message": f"pin {pin} refers to part {ref}, "
                                         "which is not in the parts list",
                              "location": f"net {pin_to_nets[pin][0]}"})
+
+    # --- check 11: pin number not in the part's declared pin list ---------
+    # A net (or no_connect, or a power pin) that references U1.99 when
+    # U1 only declares pins 1-56 is a typo or a hallucinated pin — it
+    # used to pass silently. Parts with an empty/missing pins list are
+    # skipped here: with no pinout to check against, nothing can be
+    # proven wrong (the pinout is still UNVERIFIED, see check 0).
+    declared_pins = {}
+    for ref, part in parts.items():
+        pins = part.get("pins")
+        if isinstance(pins, list) and pins:
+            declared_pins[ref] = {str(p) for p in pins
+                                  if isinstance(p, str) and PIN_NUM_RE.match(p)}
+    for pin in sorted(pin_to_nets):
+        ref, num = parse_pin(pin)
+        if ref is None or ref not in declared_pins:
+            continue  # unknown ref already reported by check 3
+        if num not in declared_pins[ref]:
+            findings.append({"severity": "error", "check": "unknown-pin",
+                             "message": f"pin {pin} is not in part {ref}'s "
+                                        f"pin list (declared: "
+                                        f"{', '.join(sorted(declared_pins[ref], key=lambda x: (len(x), x))[:8])}"
+                                        f"{'...' if len(declared_pins[ref]) > 8 else ''}) "
+                                        "— check the datasheet pinout",
+                             "location": f"net {pin_to_nets[pin][0]}"})
+    for pin in sorted(no_connect):
+        ref, num = parse_pin(pin)
+        if ref is None or ref not in declared_pins:
+            continue
+        if num not in declared_pins[ref]:
+            findings.append({"severity": "error", "check": "unknown-pin",
+                             "message": f"pin {pin} in no_connect is not "
+                                        f"in part {ref}'s pin list — check "
+                                        "the datasheet pinout",
+                             "location": "no_connect"})
+    for ref, part in parts.items():
+        if ref not in declared_pins:
+            continue
+        for pnum in _pin_list(part.get("power_pins")):
+            pin = f"{ref}.{pnum}"
+            # Only when the pin IS connected: an unconnected power pin
+            # is already an error under check 4, do not double-report.
+            if pin in pin_to_nets and str(pnum) not in declared_pins[ref]:
+                findings.append({"severity": "error", "check": "unknown-pin",
+                                 "message": f"power pin {pin} is not in "
+                                            f"part {ref}'s pin list — check "
+                                            "the datasheet pinout",
+                                 "location": f"part {ref}"})
+
+    # --- check 10: layer count ----------------------------------------------
+    board = spec.get("board")
+    if board is not None and not isinstance(board, dict):
+        findings.append({"severity": "error", "check": "board-not-an-object",
+                         "message": "spec 'board' must be an object "
+                                    "{\"name\", \"layers\", \"fab\"}",
+                         "location": ""})
+    elif isinstance(board, dict) and "layers" in board:
+        layers = board["layers"]
+        if isinstance(layers, float) and math.isfinite(layers) and layers.is_integer():
+            layers = int(layers)  # JSON 2.0 means 2 layers
+        if isinstance(layers, bool) or not isinstance(layers, int):
+            findings.append({"severity": "error", "check": "layers-not-a-number",
+                             "message": f"board layers is {layers!r} — it "
+                                        "must be a whole number (1, 2, 4, "
+                                        "6 or 8)",
+                             "location": "board"})
+        elif layers in forbidden_counts:
+            findings.append({"severity": "error", "check": "forbidden-layer-count",
+                             "message": f"board has {layers} layers — "
+                                        "3-layer boards are forbidden "
+                                        "(config layers.forbidden_counts): "
+                                        "if 2 layers are not enough, go "
+                                        "to 4",
+                             "location": "board"})
+        elif layers not in allowed_counts:
+            findings.append({"severity": "error", "check": "unsupported-layer-count",
+                             "message": f"board has {layers} layers — "
+                                        f"allowed counts are "
+                                        f"{list(allowed_counts)} (config "
+                                        "layers.allowed_counts)",
+                             "location": "board"})
 
     # --- check 4: power pins not connected ----------------------------------
     for ref, part in parts.items():
@@ -255,10 +424,14 @@ def check_spec(spec, config):
 
     # --- check 7: I2C nets without pull-up ----------------------------------
     for net in nets_list:
+        if not isinstance(net, dict):
+            continue
         name = net.get("name", "")
+        if not isinstance(name, str):
+            name = "" if name is None else str(name)
         if name.upper() not in ("SDA", "SCL"):
             continue
-        pins = net.get("pins") or []
+        pins = _pin_list(net.get("pins"))
         has_pullup = False
         for pin in pins:
             ref, _num = parse_pin(pin)
@@ -277,7 +450,9 @@ def check_spec(spec, config):
 
     # --- check 8: single-pin nets -------------------------------------------
     for net in nets_list:
-        pins = net.get("pins") or []
+        if not isinstance(net, dict):
+            continue
+        pins = _pin_list(net.get("pins"))
         if len(pins) == 1:
             findings.append({"severity": "warning", "check": "single-pin-net",
                              "message": f"net '{net.get('name', '')}' has only "
@@ -329,7 +504,12 @@ def main(argv=None):
             raise SetupError(f"spec file not found: {spec_path}")
         if not config_path.is_file():
             raise SetupError(f"config file not found: {config_path}")
-        config = json.loads(config_path.read_text(encoding="utf-8"))
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise SetupError(f"config is not valid JSON: {exc}")
+        if not isinstance(config, dict):
+            raise SetupError("config must be a JSON object")
         try:
             spec = json.loads(spec_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
@@ -337,13 +517,13 @@ def main(argv=None):
         findings, stats, skipped = check_spec(spec, config)
     except SetupError as exc:
         print(f"SETUP ERROR: {exc}", file=sys.stderr)
-        print("--- AUDIT LOG ---")
-        print(f"script: {SCRIPT} v{VERSION}")
-        print(f"started: {started} UTC")
-        print(f"input: {spec_path} (not read)")
-        print(f"config: {config_path}")
-        print("checks run: none — setup failed")
-        print("result: SETUP ERROR (exit 2)")
+        print("--- AUDIT LOG ---", file=sys.stderr)
+        print(f"script: {SCRIPT} v{VERSION}", file=sys.stderr)
+        print(f"started: {started} UTC", file=sys.stderr)
+        print(f"input: {spec_path} (not read)", file=sys.stderr)
+        print(f"config: {config_path}", file=sys.stderr)
+        print("checks run: none — setup failed", file=sys.stderr)
+        print("result: SETUP ERROR (exit 2)", file=sys.stderr)
         return 2
 
     errors = [f for f in findings if f["severity"] == "error"]
@@ -370,18 +550,24 @@ def main(argv=None):
               f"{stats['pins_in_nets']} pin(s) in nets.")
         print(f"Result: {len(errors)} error(s), {len(warnings)} warning(s).")
 
-    print("--- AUDIT LOG ---")
-    print(f"script: {SCRIPT} v{VERSION}")
-    print(f"started: {started} UTC")
-    print(f"input: {spec_path} (sha256 {sha256_of(spec_path)[:16]}...)")
-    print(f"config: {config_path} (sha256 {sha256_of(config_path)[:16]}...)")
+    # Audit log goes to STDERR, never stdout: with --json, stdout must
+    # be parseable JSON only (fixed in v1.2.3).
+    print("--- AUDIT LOG ---", file=sys.stderr)
+    print(f"script: {SCRIPT} v{VERSION}", file=sys.stderr)
+    print(f"started: {started} UTC", file=sys.stderr)
+    print(f"input: {spec_path} (sha256 {sha256_of(spec_path)[:16]}...)", file=sys.stderr)
+    print(f"config: {config_path} (sha256 {sha256_of(config_path)[:16]}...)", file=sys.stderr)
     print("checks run: pin-on-two-nets, pin-net-and-nc, unknown-reference, "
-          "pins-not-a-list, power-pins-not-a-list, pins-not-a-number, " 
-          "power-pin-not-a-number, net-pins-not-a-list, malformed-pin, power-pin-unconnected, no-decoupling, no-bulk-cap, "
-          "i2c-no-pullup, single-pin-net, unconnected-pin")
-    print(f"checks skipped: {'; '.join(skipped) if skipped else 'none'}")
-    print(f"findings: {len(errors)} error(s), {len(warnings)} warning(s)")
-    print(f"result: {'FAIL' if errors else 'PASS'} (exit {1 if errors else 0})")
+          "pins-not-a-list, power-pins-not-a-list, pins-not-a-number, "
+          "power-pin-not-a-number, net-pins-not-a-list, malformed-pin, "
+          "power-pin-unconnected, no-decoupling, no-bulk-cap, "
+          "i2c-no-pullup, single-pin-net, unconnected-pin, "
+          "unknown-pin, forbidden-layer-count, unsupported-layer-count",
+          file=sys.stderr)
+    print(f"checks skipped: {'; '.join(skipped) if skipped else 'none'}", file=sys.stderr)
+    print(f"findings: {len(errors)} error(s), {len(warnings)} warning(s)", file=sys.stderr)
+    print(f"result: {'FAIL' if errors else 'PASS'} (exit {1 if errors else 0})",
+          file=sys.stderr)
     return 1 if errors else 0
 
 
