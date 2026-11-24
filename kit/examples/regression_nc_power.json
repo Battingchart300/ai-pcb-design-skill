@@ -1,0 +1,58 @@
+{
+  "board": {
+    "name": "Regression NC power pin",
+    "layers": 2,
+    "fab": "jlcpcb"
+  },
+  "parts": [
+    {
+      "ref": "U1",
+      "value": "ESP32-S3",
+      "footprint": "QFN-56",
+      "mpn": "ESP32-S3-WROOM-1",
+      "type": "mcu",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8"
+      ],
+      "power_pins": [
+        "1"
+      ]
+    },
+    {
+      "ref": "C1",
+      "value": "10uF",
+      "footprint": "0805",
+      "type": "capacitor",
+      "pins": [
+        "1",
+        "2"
+      ]
+    }
+  ],
+  "nets": [
+    {
+      "name": "+3V3",
+      "pins": [
+        "U1.2",
+        "C1.1"
+      ]
+    },
+    {
+      "name": "GND",
+      "pins": [
+        "U1.3",
+        "C1.2"
+      ]
+    }
+  ],
+  "no_connect": [
+    "U1.1"
+  ]
+}
