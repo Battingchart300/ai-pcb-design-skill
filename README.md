@@ -2,9 +2,21 @@
 
 Teach AI models to design PCBs — from a single prompt to a manufacturable board: schematic, layout, DRC checks, KiCad 10+ output and scripts.
 
-**Version:** 1.2.1 — 2026-11-23
+**Version:** 1.2.2 — 2026-11-24
 
 ## Changelog
+
+### v1.2.2 — 2026-11-24
+
+- **`rules_check.py` rejects bad pin formats with one clear error**:
+  `pins` / `power_pins` given as text instead of a list is now one
+  error per part (`pins-not-a-list` / `power_pins-not-a-list`), instead
+  of hundreds of warnings from reading the text character by
+  character. Same for non-numeric list entries and `pins` in nets.
+  Bad values are treated as empty afterwards, so the same problem is
+  not reported twice. (Gemini test spec: 5 errors / 296 warnings →
+  7 errors / 0 warnings, still correctly FAIL; ChatGPT reference
+  spec still 0 / 0.)
 
 ### v1.2.1 — 2026-11-23
 
