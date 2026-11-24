@@ -3,18 +3,25 @@
 
 Checks (all values come from config.json, defaults are the skill's
 design-to values):
-  1. Unrouted / unconnected nets — a declared net with no copper at all.
+  1. Unrouted / unconnected nets — real per-net connectivity
+     (union-find over pads, segments, arcs and vias): a declared net
+     with no copper at all, or a net split into disconnected copper
+     groups. A via connects every layer it spans.
   2. Trace width below the design-to minimum.
   3. Via drill / pad below the minimum, annular ring too small.
   4. 90-degree trace corners (45-degree / arc corners only).
-  5. Copper closer to the board edge than the allowed distance.
+  5. Copper closer to the board edge than the allowed distance,
+     measured from the copper edge (centreline minus half the trace
+     width, via centre minus half the pad size, pad outline as drawn).
   6. Clearance and shorts — copper of DIFFERENT nets on the SAME layer
      closer than min_clearance_mm (error), or touching/overlapping
      (distance <= 0, reported as a short, error). Covers segments,
      arcs (subdivided into short straight chords), vias and pads
      (circle, oval, rectangular — roundrect is approximated by its
-     bounding rectangle). Copper pours (zones) are NOT covered, and
-     custom-shaped pads are skipped — see "Limits" below.
+     bounding rectangle). A through via / through-hole pad is checked
+     on EVERY copper layer it spans, not just its listed end layers.
+     Copper pours (zones) are NOT covered, and custom-shaped pads are
+     skipped — see "Limits" below.
 
 Limits of check 6 (be honest about them):
   - Zones (copper pours) are skipped entirely — a pour is one big
@@ -28,6 +35,12 @@ Limits of check 6 (be honest about them):
   - Copper with no net (net 0 / unassigned, e.g. mounting-hole pads)
     is skipped — it is often intentionally connected (grounded
     mounting holes), so flagging it would be a false positive.
+  - The edge check (5) uses the bounding rectangle of the Edge.Cuts
+    outline, so cutouts and irregular board shapes are not modelled.
+  - The connectivity check (1) skips nets that have a zone or a
+    custom-shaped pad: a pad that only connects through a pour or a
+    custom shape cannot be proven connected from the modelled
+    geometry, so those nets are reported as skipped, not as passing.
 
 This is NOT a replacement for KiCad DRC (kicad-cli pcb drc). It is the
 skill's independent second check: it reads the raw .kicad_pcb text and
@@ -50,7 +63,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.4"
+VERSION = "1.2.5"
 SCRIPT = "drc_check"
 
 # ---------------------------------------------------------------------------
@@ -467,17 +480,24 @@ def check_board(path, config):
 
     root = tree[0]
 
-    # Copper layers declared in the board ((layers ...) section). A layer
-    # name ending in ".Cu" is copper; "*.Cu" means "all copper layers".
+    # Copper layers declared in the board ((layers ...) section), in
+    # stackup order. A layer name ending in ".Cu" is copper; "*.Cu"
+    # means "all copper layers". The ORDER matters: a through via or
+    # through-hole pad listed as F.Cu + B.Cu spans every copper layer
+    # between them (see expand_span).
     copper_layers = set()
+    copper_order = []
     layers_node = child(root, "layers")
     if layers_node:
         for item in layers_node[1:]:
             if isinstance(item, list) and len(item) >= 2 and \
-                    isinstance(item[1], str) and item[1].endswith(".Cu"):
+                    isinstance(item[1], str) and item[1].endswith(".Cu") \
+                    and item[1] not in copper_order:
+                copper_order.append(item[1])
                 copper_layers.add(item[1])
     if not copper_layers:
         copper_layers = {"F.Cu", "B.Cu"}
+        copper_order = ["F.Cu", "B.Cu"]
 
     def expand_layers(names):
         """Expand a list of layer names: "*.Cu" becomes all copper
@@ -489,6 +509,21 @@ def check_board(path, config):
             elif isinstance(name, str):
                 out.add(name)
         return out
+
+    def expand_span(names):
+        """Expand a via/pad layer set to the full span it covers on
+        this board: a plated through hole listed as F.Cu + B.Cu spans
+        every copper layer between them, so it must be checked on the
+        inner layers too; a blind/buried via spans only its listed
+        range. Returns copper layers only."""
+        expanded = {n for n in expand_layers(names)
+                    if isinstance(n, str) and n.endswith(".Cu")}
+        ordered = [l for l in copper_order if l in expanded]
+        if len(ordered) >= 2:
+            lo = copper_order.index(ordered[0])
+            hi = copper_order.index(ordered[-1])
+            return set(copper_order[lo:hi + 1])
+        return expanded
 
     # --- net declarations: (net <id> "<name>") with 3 items ----------------
     declared = {}
@@ -525,7 +560,7 @@ def check_board(path, config):
         size = child_value(via, "size", 1)
         drill = child_value(via, "drill", 1)
         layers = child(via, "layers")
-        via_layers = expand_layers(layers[1:]) if layers else set(copper_layers)
+        via_layers = expand_span(layers[1:]) if layers else set(copper_layers)
         if at and isinstance(size, (int, float)):
             vias.append({
                 "net": net,
@@ -575,6 +610,7 @@ def check_board(path, config):
     pads_no_net = 0
     pads_custom_skipped = 0
     pads_roundrect_approx = 0
+    nets_with_custom_pad = set()
     for fp in find_nodes(root, "footprint"):
         fp_at = child(fp, "at")
         if not fp_at:
@@ -596,7 +632,7 @@ def check_board(path, config):
             sx, sy = float(size[1]), float(size[2])
             cu_layers = set()
             if layers:
-                cu_layers = {l for l in expand_layers(layers[1:]) if l.endswith(".Cu")}
+                cu_layers = expand_span(layers[1:])
             if not cu_layers:
                 continue
             if not isinstance(net, int) or net == 0:
@@ -634,28 +670,176 @@ def check_board(path, config):
             else:
                 # "custom" and anything unknown: not covered.
                 pads_custom_skipped += 1
+                if isinstance(net, int) and net != 0:
+                    nets_with_custom_pad.add(net)
     for pad in find_nodes(root, "pad"):
         net = child_value(pad, "net", 1)
         if isinstance(net, int):
             used_nets.add(net)
     zones_found = 0
+    nets_with_zone = set()
     for zone in find_nodes(root, "zone"):
         zones_found += 1
         net = child_value(zone, "net", 1)
         if isinstance(net, int):
             used_nets.add(net)
+            nets_with_zone.add(net)
 
-    # --- check 1: unrouted nets --------------------------------------------
+    def _obj_bbox(o):
+        if o["kind"] == "circle":
+            cx, cy = o["c"]
+            r = o["r"]
+            return (cx - r, cy - r, cx + r, cy + r)
+        if o["kind"] == "capsule":
+            r = o["r"]
+            return (min(o["a"][0], o["b"][0]) - r,
+                    min(o["a"][1], o["b"][1]) - r,
+                    max(o["a"][0], o["b"][0]) + r,
+                    max(o["a"][1], o["b"][1]) + r)
+        xs = [p[0] for p in o["pts"]]
+        ys = [p[1] for p in o["pts"]]
+        return (min(xs), min(ys), max(xs), max(ys))
+
+    def _obj_centre(o):
+        if o["kind"] == "circle":
+            return o["c"]
+        if o["kind"] == "capsule":
+            return ((o["a"][0] + o["b"][0]) / 2, (o["a"][1] + o["b"][1]) / 2)
+        n = len(o["pts"])
+        return (sum(p[0] for p in o["pts"]) / n,
+                sum(p[1] for p in o["pts"]) / n)
+
+    # --- check 1: unrouted nets (real per-net connectivity) ---------------
+    # Union-find over the copper objects of each net: two objects
+    # connect when they touch or overlap on a shared copper layer.
+    # A via connects every layer it spans, so F.Cu -> via -> B.Cu is
+    # one group. A net passes only when all of its copper is in one
+    # connected component. Nets with a zone or a custom-shaped pad are
+    # skipped here — pours and custom shapes are not modelled, so a
+    # pad that only connects through them would be a false positive.
+    conn_objects = []
+    for seg in segments:
+        if isinstance(seg["net"], int) and seg["net"] != 0 \
+                and seg["layer"].endswith(".Cu"):
+            conn_objects.append({
+                "kind": "capsule", "a": seg["start"], "b": seg["end"],
+                "r": seg["width"] / 2.0, "layers": {seg["layer"]},
+                "net": seg["net"],
+                "label": f"trace on net "
+                         f"'{declared.get(seg['net'], str(seg['net']))}'",
+            })
+    for arc in arcs:
+        if isinstance(arc["net"], int) and arc["net"] != 0 \
+                and arc["layer"].endswith(".Cu"):
+            conn_objects.append({
+                "kind": "capsule", "a": arc["start"], "b": arc["end"],
+                "r": arc["width"] / 2.0, "layers": {arc["layer"]},
+                "net": arc["net"],
+                "label": f"arc on net "
+                         f"'{declared.get(arc['net'], str(arc['net']))}'",
+            })
+    for via in vias:
+        if isinstance(via["net"], int) and via["net"] != 0:
+            cu = {l for l in via["layers"] if l.endswith(".Cu")}
+            if cu:
+                conn_objects.append({
+                    "kind": "circle", "c": via["at"], "r": via["size"] / 2.0,
+                    "layers": cu, "net": via["net"],
+                    "label": f"via on net "
+                             f"'{declared.get(via['net'], str(via['net']))}'",
+                })
+    for pad in pads:
+        conn_objects.append({**pad, "label": pad["desc"]})
+
+    _parent = list(range(len(conn_objects)))
+
+    def _find(x):
+        while _parent[x] != x:
+            _parent[x] = _parent[_parent[x]]
+            x = _parent[x]
+        return x
+
+    def _union(a, b):
+        ra, rb = _find(a), _find(b)
+        if ra != rb:
+            _parent[ra] = rb
+
+    # Spatial grid: only nearby objects can touch, so each object is
+    # filed into the 2 mm cells its bounding box touches.
+    _cell = 2.0
+    _grid = {}
+    for _idx, _obj in enumerate(conn_objects):
+        _x0, _y0, _x1, _y1 = _obj_bbox(_obj)
+        for _ix in range(math.floor(_x0 / _cell),
+                         math.floor(_x1 / _cell) + 1):
+            for _iy in range(math.floor(_y0 / _cell),
+                             math.floor(_y1 / _cell) + 1):
+                _grid.setdefault((_ix, _iy), []).append(_idx)
+    _seen_pairs = set()
+    for _cell_objs in _grid.values():
+        for _i in range(len(_cell_objs)):
+            for _j in range(_i + 1, len(_cell_objs)):
+                _a, _b = _cell_objs[_i], _cell_objs[_j]
+                _key = (_a, _b) if _a < _b else (_b, _a)
+                if _key in _seen_pairs:
+                    continue
+                _seen_pairs.add(_key)
+                _o1, _o2 = conn_objects[_a], conn_objects[_b]
+                if _o1["net"] != _o2["net"]:
+                    continue
+                if not (_o1["layers"] & _o2["layers"]):
+                    continue
+                _dist, _, _ = obj_distance(_o1, _o2)
+                if _dist <= 1e-6:
+                    _union(_a, _b)
+
+    _by_net_objs = {}
+    for _idx, _obj in enumerate(conn_objects):
+        _by_net_objs.setdefault(_obj["net"], []).append(_idx)
+    _conn_skipped_zone = set()
+    _conn_skipped_custom = set()
     for net_id in sorted(declared):
         name = declared[net_id]
         if net_id == 0:  # net 0 is the empty net, always unused by design
             continue
-        if net_id not in used_nets:
+        objs = _by_net_objs.get(net_id, [])
+        if not objs:
             findings.append(Finding(
                 "error", "unrouted-net",
                 f"net {net_id} '{name}' is declared but has no copper "
                 "(no segment, via, pad or zone) — unrouted net",
                 f"net {net_id}"))
+            continue
+        if net_id in nets_with_zone:
+            _conn_skipped_zone.add(net_id)
+            continue
+        if net_id in nets_with_custom_pad:
+            _conn_skipped_custom.add(net_id)
+            continue
+        groups = {}
+        for _idx in objs:
+            groups.setdefault(_find(_idx), []).append(_idx)
+        if len(groups) <= 1:
+            continue
+        # The largest group is "the net"; every other group is
+        # unconnected copper — one error per extra group.
+        ordered = sorted(groups.values(), key=len, reverse=True)
+        for extra in ordered[1:]:
+            rep = conn_objects[extra[0]]
+            findings.append(Finding(
+                "error", "unrouted-net",
+                f"{rep['label']} is not connected to the rest of "
+                f"the net — the net is split into {len(groups)} "
+                "disconnected groups",
+                f"net {net_id}"))
+    if _conn_skipped_zone:
+        skipped.append("connectivity check skipped nets with zones "
+                       f"({', '.join(sorted(declared[n] for n in _conn_skipped_zone))}) "
+                       "— pours are not modelled")
+    if _conn_skipped_custom:
+        skipped.append("connectivity check skipped nets with custom-shaped "
+                       f"pads ({', '.join(sorted(declared[n] for n in _conn_skipped_custom))}) "
+                       "— custom shapes are not modelled")
 
     # --- check 2: trace width ----------------------------------------------
     for seg in segments:
@@ -724,6 +908,11 @@ def check_board(path, config):
                         f"at ({shared[0]:.2f}, {shared[1]:.2f})"))
 
     # --- check 5: copper too close to the board edge -----------------------
+    # Distance is measured from the COPPER edge, not the centreline:
+    # a trace centreline minus half its width, a via centre minus half
+    # its pad size, a pad by its drawn outline. The outline is the
+    # bounding rectangle of the Edge.Cuts lines — cutouts and irregular
+    # outlines are not modelled (see the module docstring).
     edge_lines = []
     for line in find_nodes(root, "gr_line"):
         if child_value(line, "layer", 1) == "Edge.Cuts":
@@ -736,22 +925,61 @@ def check_board(path, config):
         xs = [p[0] for seg in edge_lines for p in seg]
         ys = [p[1] for seg in edge_lines for p in seg]
         bbox = (min(xs), min(ys), max(xs), max(ys))
-        points = []
+        sides = [((bbox[0], bbox[1]), (bbox[2], bbox[1])),
+                 ((bbox[2], bbox[1]), (bbox[2], bbox[3])),
+                 ((bbox[2], bbox[3]), (bbox[0], bbox[3])),
+                 ((bbox[0], bbox[3]), (bbox[0], bbox[1]))]
+
+        def copper_edge_dist(prims, extent, ref):
+            """Signed distance from copper to the nearest board edge.
+            prims: (a, b) segments describing the copper outline;
+            extent: radius to subtract (0 for polygons, whose outline
+            is already the copper edge); ref: a point inside the
+            copper, for the inside/outside sign. Negative means the
+            copper is outside the board."""
+            d = min(seg_seg(pa, pb, sa, sb)[0]
+                    for pa, pb in prims for sa, sb in sides)
+            inside = (bbox[0] <= ref[0] <= bbox[2] and
+                      bbox[1] <= ref[1] <= bbox[3])
+            return d - extent if inside else -d - extent
+
+        def pad_prims(pad):
+            """(outline segments, extent, reference point) for a pad."""
+            if pad["kind"] == "circle":
+                return ([(pad["c"], pad["c"])], pad["r"], pad["c"])
+            if pad["kind"] == "capsule":
+                mid = ((pad["a"][0] + pad["b"][0]) / 2,
+                       (pad["a"][1] + pad["b"][1]) / 2)
+                return ([(pad["a"], pad["b"])], pad["r"], mid)
+            pts = pad["pts"]
+            return ([(pts[i], pts[(i + 1) % len(pts)])
+                     for i in range(len(pts))],
+                    0.0,
+                    (sum(p[0] for p in pts) / len(pts),
+                     sum(p[1] for p in pts) / len(pts)))
+
+        edge_items = []
         for seg in segments:
             name = declared.get(seg["net"], str(seg["net"]))
-            points.append((seg["start"], f"trace on net '{name}'"))
-            points.append((seg["end"], f"trace on net '{name}'"))
+            edge_items.append(([(seg["start"], seg["end"])],
+                               seg["width"] / 2.0, seg["start"],
+                               f"trace on net '{name}'"))
         for via in vias:
             name = declared.get(via["net"], str(via["net"]))
-            points.append((via["at"], f"via on net '{name}'"))
-        for (x, y), what in points:
-            dist = min(x - bbox[0], bbox[2] - x, y - bbox[1], bbox[3] - y)
+            edge_items.append(([(via["at"], via["at"])],
+                               via["size"] / 2.0, via["at"],
+                               f"via on net '{name}'"))
+        for pad in pads:
+            prims, extent, ref = pad_prims(pad)
+            edge_items.append((prims, extent, ref, pad["desc"]))
+        for prims, extent, ref, what in edge_items:
+            dist = copper_edge_dist(prims, extent, ref)
             if dist < edge_clear:
                 findings.append(Finding(
                     "warning", "copper-to-edge",
                     f"{what} is {dist:.2f} mm from the board edge, "
                     f"below {edge_clear:.2f} mm",
-                    f"at ({x:.2f}, {y:.2f})"))
+                    f"at ({ref[0]:.2f}, {ref[1]:.2f})"))
     else:
         skipped.append("copper-to-edge (no Edge.Cuts outline found in file)")
 
@@ -760,30 +988,6 @@ def check_board(path, config):
     # + half width), vias and round pads are circles, rectangular pads
     # are polygons. Objects with no net (net 0 / unassigned) are skipped
     # — see the module docstring for why.
-    def _obj_bbox(o):
-        if o["kind"] == "circle":
-            cx, cy = o["c"]
-            r = o["r"]
-            return (cx - r, cy - r, cx + r, cy + r)
-        if o["kind"] == "capsule":
-            r = o["r"]
-            return (min(o["a"][0], o["b"][0]) - r,
-                    min(o["a"][1], o["b"][1]) - r,
-                    max(o["a"][0], o["b"][0]) + r,
-                    max(o["a"][1], o["b"][1]) + r)
-        xs = [p[0] for p in o["pts"]]
-        ys = [p[1] for p in o["pts"]]
-        return (min(xs), min(ys), max(xs), max(ys))
-
-    def _obj_centre(o):
-        if o["kind"] == "circle":
-            return o["c"]
-        if o["kind"] == "capsule":
-            return ((o["a"][0] + o["b"][0]) / 2, (o["a"][1] + o["b"][1]) / 2)
-        n = len(o["pts"])
-        return (sum(p[0] for p in o["pts"]) / n,
-                sum(p[1] for p in o["pts"]) / n)
-
     objects = []
     for seg in segments:
         if not isinstance(seg["net"], int) or seg["net"] == 0:
