@@ -5,7 +5,7 @@ description: Teaches an AI assistant to design PCBs from a single prompt to a ma
 
 # ai-pcb-design-skill
 
-**Version:** 1.2.1 — 2026-11-23
+**Version:** 1.2.2 — 2026-11-24
 **What it is:** a skill that teaches an AI assistant to design printed
 circuit boards (PCBs) — from a single user prompt to a manufacturable
 board: schematic, layout, DRC checks, KiCad 10+ output and scripts.
