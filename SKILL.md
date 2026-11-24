@@ -5,8 +5,14 @@ description: Teaches an AI assistant to design PCBs from a single prompt to a ma
 
 # ai-pcb-design-skill
 
-**Version:** 1.2.3 — 2026-11-24
+**Version:** 1.2.4 — 2026-11-24
 
+**v1.2.4 — 2026-11-24 (re-audit fixes, ChatGPT re-audit of v1.2.3):**
+`rules_check.py` now errors on a power pin marked no_connect
+(`power-pin-no-connect` — a power pin must be connected to a power
+net, it can never be no-connect; it used to pass silently). New
+regression fixture `kit/examples/regression_nc_power.json` (must FAIL
+with that one error).
 **v1.2.3 — 2026-11-24 (review fixes, from the Claude AI + ChatGPT
 reviews of v1.2.2):** `trace_width.py` internal-layer factor corrected
 to ~2.6× and the 5 A table entry to 2.78 mm (formula-generated);
@@ -1295,7 +1301,7 @@ Windows PC, with no installation). See `kit/README.md` for full usage.
 | `drc_check.py` | Unrouted nets, trace width, via drill/pad, annular ring, 90° corners, copper-to-edge, clearance and shorts (different nets, same layer; zones not covered, `kicad-cli pcb drc` still required) — on a raw `.kicad_pcb` |
 | `bom_check.py` | Missing MPN / footprint / value, duplicate reference, quantity mismatch, missing LCSC — on a BOM CSV |
 | `trace_width.py` | IPC-2221 trace width for a current (single value, table, or a CSV of nets) |
-| `rules_check.py` | Spec-first lint (§2): pin on two nets, unknown reference, pin not in the part's pin list (`unknown-pin`), unconnected power pin, forbidden 3-layer board / unsupported layer count, missing decoupling / bulk cap, I2C without pull-up, single-pin net. Bad spec data (wrong types, NaN, strings where lists belong) is reported as a clean error, never a traceback |
+| `rules_check.py` | Spec-first lint (§2): pin on two nets, unknown reference, pin not in the part's pin list (`unknown-pin`), unconnected power pin, power pin in no_connect, forbidden 3-layer board / unsupported layer count, missing decoupling / bulk cap, I2C without pull-up, single-pin net. Bad spec data (wrong types, NaN, strings where lists belong) is reported as a clean error, never a traceback |
 | `fix_corners.py` | **Fixer (not a checker):** chamfers 90° corners to 45° in a `.kicad_pcb` — writes `<name>.fixed.kicad_pcb` by default, `--in-place` only with a `.bak` backup, `--dry-run` changes nothing; acute angles are reported, never fixed. Post-fix regression check (v1.2.3): DRC errors before vs after — warns loudly and exits 1 if the fix made the board worse |
 | `run_all.py` | Runs all four checks on the example files — or on your own board with `--pcb` / `--bom` / `--nets` / `--spec` — and prints one summary |
 

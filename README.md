@@ -1,12 +1,20 @@
 # ai-pcb-design-skill
 
-I wanted an AI to design PCBs for me. The problem is that models hallucinate footprints and pinouts, so I wrote a skill that does not let them. It is a gated workflow with hard rules, and a kit of Python scripts that check the board independently. The model never declares a board correct. The scripts do, and a human reviews the result.
+Teach AI models to design PCBs — from a single prompt to a manufacturable board: schematic, layout, DRC checks, KiCad 10+ output and scripts.
 
-I tested it on a DIY Flipper main board through free Claude. It held up.
-
-**Version:** 1.2.3 — 2026-11-24
+**Version:** 1.2.4 — 2026-11-24
 
 ## Changelog
+
+### v1.2.4 — 2026-11-24
+
+Re-audit fixes (ChatGPT re-audit of v1.2.3):
+
+- **`rules_check.py`**: a power pin marked `no_connect` is now an
+  error (`power-pin-no-connect`) — a power pin must be connected to
+  a power net, it can never be no-connect. It used to pass silently.
+  New regression fixture `kit/examples/regression_nc_power.json`
+  (must FAIL with that one error).
 
 ### v1.2.3 — 2026-11-24
 
@@ -105,16 +113,32 @@ every kit script):
 
 ## What it does
 
+`SKILL.md` is a gated workflow for an AI assistant that helps design
+printed circuit boards:
 
-`SKILL.md` is the whole workflow. It covers 13 things: layers 1, 2, 4 and more, components picked from requirements, board outline with rounded or square corners, routing rules, DRC and a pre-manufacturing check, power, carrier boards for compute modules (a Raspberry Pi CM5 goes through DF40), a board around any chip straight from its datasheet, DIY computers from discrete 74xx logic, a custom motherboard, DDR2 and DDR3 DIMM and SO-DIMM, a design from a single prompt (PCB plus BOM), and an audit of a board somebody hands over.
-
-Before designing anything new, it points at two reference boards to study first — the Olimex ESP32-EVB and the Arduino UNO R3, in `prototypes/`. Patterns to learn from, never files to copy blindly.
-
-It works for all manufacturing methods, not just a fab. Professional fab (JLCPCB), home photoresist and UV, thermal transfer and etching, CNC milling, flex, rigid-flex, metal-core, HDI, RF, conductive ink, 3D-printed circuits, ceramic, LDS.
-
-The rules are simple and strict. Never invent a value, ask the user instead. Verify on the web, never from memory. Mark what cannot be verified as `UNVERIFIED`. Never loosen a check to make it pass. And the order is placed only by the human, never by the model.
-
-A finished board goes through 3 checks: schematic and wiring, layout and DRC, pre-manufacturing. Each one finds as many errors as it can and fixes them.
+- **13 capabilities** — layers 1/2/4+, components from requirements,
+  board outline (rounded and square corners), routing rules, DRC +
+  pre-manufacturing check, power, carrier boards for compute modules
+  (e.g. Raspberry Pi CM5 via DF40), a board around any chip from its
+  datasheet, DIY computers from discrete 74xx logic, a custom
+  motherboard, DDR2/DDR3 DIMM and SO-DIMM, design from a single user
+  prompt (PCB + BOM), and audit of a PCB the user hands over.
+- **All manufacturing methods** — professional fab (JLCPCB), home
+  photoresist + UV, thermal transfer + etching, CNC milling, flex,
+  rigid-flex, metal-core, HDI, RF, conductive ink, 3D-printed circuits,
+  ceramic, LDS.
+- **Hard rules** — never invent a value (ask the user instead), verify
+  on the web never from memory, mark the unverifiable `UNVERIFIED`,
+  never loosen a check, the order is placed only by the human.
+- **The 3 checks** of a finished board (schematic & wiring, layout &
+  DRC, pre-manufacturing) — each finds as many errors as possible and
+  fixes them.
+- **A kit of real Python scripts** (`kit/`) that verify the design
+  independently: the model never declares a board correct — the scripts
+  do, and a human reviews the result.
+- **Reference boards (`prototypes/`)** — complete, proven boards to
+  study before designing a similar one (Olimex ESP32-EVB, Arduino
+  UNO R3). Patterns to learn from, never files to copy blindly.
 
 ## Works with any AI
 
