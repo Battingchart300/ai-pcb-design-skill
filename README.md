@@ -2,9 +2,50 @@
 
 Teach AI models to design PCBs — from a single prompt to a manufacturable board: schematic, layout, DRC checks, KiCad 10+ output and scripts.
 
-**Version:** 1.2.2 — 2026-11-24
+**Version:** 1.2.3 — 2026-11-24
 
 ## Changelog
+
+### v1.2.3 — 2026-11-24
+
+Review fixes (Claude AI + ChatGPT reviews of v1.2.2 — both re-ran
+every kit script):
+
+- **`drc_check.py` rotation fix**: pin/footprint rotation was computed
+  wrong (KiCad Y-down, position −frot, shape −prot), which reported
+  693 false shorts on the Olimex ESP32-EVB reference board. After the
+  fix the EVB has **1 real short**. New example
+  `kit/examples/sample_rotated.kicad_pcb` (a rotated footprint) passes
+  0 / 0. The 14 / 5 example numbers are unchanged.
+- **`trace_width.py`**: internal-layer factor corrected to **~2.6×**
+  (was "~2×" in the script while SKILL.md §5.2 already proved 2.6×),
+  and the 5 A table entry corrected to **2.78 mm** (was 2.50 mm —
+  the formula gives 2.78 mm). The reference table is now generated
+  from the formula, so the two can never drift apart again.
+- **`--json` is valid JSON everywhere**: the audit log moved to
+  **stderr** in all scripts, so stdout with `--json` is parseable
+  JSON only. (`drc_check.py` is the one exception for now — its
+  audit log is still on stdout; see kit/README.md.)
+- **`rules_check.py`**: new checks — a pin that is not in the part's
+  pin list is an error (`unknown-pin`, e.g. U1.99), and a 3-layer
+  board is an error (`forbidden-layer-count`, config
+  `layers.forbidden_counts`). Bad spec data (wrong types, NaN,
+  strings where lists belong) is reported as a clean error (exit 1),
+  never a Python traceback. The example `spec.json` itself had a
+  latent inconsistency the new check caught (net SCL used U2.4 while
+  U2 declared only pins 1–3) — U2 now declares pins 1–4; the
+  documented 1 error / 3 warnings are unchanged.
+- **`fix_corners.py`**: post-fix **regression check** — after writing
+  the fixed board it runs `drc_check.py` on the input and the output
+  and compares error counts. On the example board the fix takes DRC
+  from 14 to 15 errors (the chamfer splits one undersized trace into
+  three segments, each counted separately) — the script now warns
+  loudly, keeps the `.bak` / untouched input, and exits 1 instead of
+  silently claiming an improvement. Also new: `--json` output.
+- **Numbers synced**: SKILL.md now says JLCPCB min board **6×6 mm**
+  (was 3×3 mm; `config.json` already said 6×6) and the §7.x
+  cross-references are fixed (§7.2–§7.4 → §7.3–§7.5; toner transfer
+  is §7.4, photoresist §7.3).
 
 ### v1.2.2 — 2026-11-24
 
@@ -156,7 +197,8 @@ All scripts are standard library only — no installation needed.
 Windows: use `python` (PowerShell). macOS/Linux: use `python3`.
 
 Exit codes: `0` = pass, `1` = fail, `2` = setup missing. Every script
-prints an audit log at the end — the log is the proof the check ran.
+prints an audit log at the end (to stderr since v1.2.3, so `--json`
+stdout stays parseable) — the log is the proof the check ran.
 
 ## Roadmap
 

@@ -5,7 +5,19 @@ description: Teaches an AI assistant to design PCBs from a single prompt to a ma
 
 # ai-pcb-design-skill
 
-**Version:** 1.2.2 — 2026-11-24
+**Version:** 1.2.3 — 2026-11-24
+
+**v1.2.3 — 2026-11-24 (review fixes, from the Claude AI + ChatGPT
+reviews of v1.2.2):** `trace_width.py` internal-layer factor corrected
+to ~2.6× and the 5 A table entry to 2.78 mm (formula-generated);
+`--json` output is valid JSON in every script (audit log moved to
+stderr); `rules_check.py` now errors on a pin that is not in the
+part's pin list and on a forbidden 3-layer board, and reports bad spec
+data as clean errors instead of crashing; `fix_corners.py` runs a
+post-fix regression check (DRC errors before vs after) and warns
+loudly if the fix made the board worse; numbers synced between
+`config.json`, this file and the scripts (JLCPCB min board 6×6 mm,
+§7.x cross-references fixed).
 **What it is:** a skill that teaches an AI assistant to design printed
 circuit boards (PCBs) — from a single user prompt to a manufacturable
 board: schematic, layout, DRC checks, KiCad 10+ output and scripts.
@@ -82,10 +94,10 @@ re-opens the dependent stages — their evidence is older than the design.
 | 3. Footprints | Verify every footprint against the datasheet land pattern (IPC-7351). | `kit/bom_check.py` on the BOM: 0 errors. |
 | 4. Stackup & rules | Enter the fab's numbers into Board Setup / DRC *before* placing anything. Set net classes. | Design rules match the chosen fab (§7). |
 | 5. Placement | Floorplan first, then exact placement (§5.4, §6.3). | Human approves the floorplan, then the placement (review stop). |
-| 6. Routing | Priority order (§5.4); autorouter only for ordinary nets (§6.4). | All nets routed; `kicad-cli pcb drc`: 0 errors. |
-| 7. Power integrity | Decoupling, bulk caps, regulator hot loop (§5.6, §6.1). | `kit/trace_width.py` passes every power net. |
+| 6. Routing | Priority order (§4.4); autorouter only for ordinary nets (§6.4). | All nets routed; `kicad-cli pcb drc`: 0 errors. |
+| 7. Power integrity | Decoupling, bulk caps, regulator hot loop (§4.6, §6.1). | `kit/trace_width.py` passes every power net. |
 | 8. Checks | The 3 checks (§8). | All 3 checks pass; review report written. |
-| 9. Fab pack | Gerber + drill + BOM + CPL (§9). | DFM gate (§7.2) passes; Gerber replay in GerbView. |
+| 9. Fab pack | Gerber + drill + BOM + CPL (§11). | DFM gate (§7.2) passes; Gerber replay in GerbView. |
 | 10. Order & bring-up | Human reviews and places the order (§0 rule 6); bring-up (§10). | Human sign-off in writing. |
 
 **Human review stops (the model waits for the human):**
@@ -172,7 +184,8 @@ python kit/rules_check.py spec.json
 
 Errors that stop the work: unknown reference, a pin number the symbol
 does not have, a pin on two nets at once (a short), a pin in a net and
-in `no_connect`, a power input pin with no connection.
+in `no_connect`, a power input pin with no connection, a forbidden
+3-layer board or an unsupported layer count.
 
 Warnings to resolve or justify in a note: an IC rail with no capacitor
 to ground, a rail with no bulk capacitor (at least 10 µF), SDA/SCL with
@@ -397,6 +410,15 @@ corners to manual re-routing:
 - **Human review:** the fixed board is a proposal, not a proof. The
   user reviews the result (visual/3D check) and re-runs `drc_check`
   before the board is used.
+- **Regression check (v1.2.3):** after writing the fixed board,
+  `fix_corners.py` runs `drc_check.py` on the input and on the output
+  and compares the error counts. A chamfer can make the count go up
+  (on the example board DRC went 14 → 15 errors: the chamfer splits
+  one undersized trace into three segments, and the per-segment
+  trace-width check counts each one). If the output has more errors
+  than the input, the script prints a loud REGRESSION WARNING, keeps
+  the `.bak` / untouched input, and exits 1 — it never silently
+  claims an improvement.
 - **Limits:** only 90° → 45° chamfers. The script never moves
   components, vias or pads, never changes a net, a width or a layer,
   and never touches acute angles (< 90°) — those are reported as
@@ -596,7 +618,7 @@ Add 15–25% margin, use steady-state (not inrush) current.
 | 1 A | **0.30 mm** |
 | 2 A | **0.79 mm** |
 | 3 A | **1.4 mm** |
-| 5 A | ~2.5 mm — consider 2 oz Cu, a pour/plane, or a busbar |
+| 5 A | **~2.8 mm** — consider 2 oz Cu, a pour/plane, or a busbar |
 | 10 A | 7.2 mm — impractical in 1 oz, use heavier copper / plane |
 
 Also: a 0.5 mm 1 oz track carries ~1.5 A, 1 mm ~2.4 A, 2 mm ~4 A at
@@ -757,7 +779,7 @@ Power is not "a 5 V rail" — it is a tree with currents. Before routing:
 The designer picks **one** method in the requirements phase (§1). The
 skill then loads only that method's rule set into DRC + the pre-order
 checklist. **Default for a beginner: §7.1 (professional rigid fab).**
-Home methods (§7.2–§7.4) are for same-day learning prototypes only.
+Home methods (§7.3–§7.5) are for same-day learning prototypes only.
 
 ### 7.1 Professional rigid FR-4 fab — JLCPCB / PCBWay / OSH Park / Aisler
 
@@ -771,7 +793,7 @@ before routing; capabilities change.
 1–32; controlled impedance on 4/6/8/…/32 layers, ±10%; FR-4 Grade A;
 thickness 0.4–4.5 mm (1.6 mm standard); finishes HASL (leaded /
 lead-free), ENIG, OSP; solder mask colours green/purple/red/yellow/
-blue/white/black; min dimension 3×3 mm.
+blue/white/black; min dimension 6×6 mm (config `fab_limits.min_board_mm`).
 
 **Trace/space & drills (JLCPCB, 1 oz):** 1–2L **0.10/0.10 mm** in the
 current capability capture, commonly quoted as 0.127 mm (5 mil) in
@@ -976,7 +998,7 @@ capability page; do not hard-code a vendor's extreme limit.**
 | Need | Choose |
 |---|---|
 | Default / anything with USB, CAN-FD, dense SMD, assembly | §7.1 Professional rigid fab |
-| Same-day simple through-hole prototype, learning | §7.3 toner transfer (single-sided, ≥ 0.5 mm) or §7.2 photoresist or §7.5 CNC milling |
+| Same-day simple through-hole prototype, learning | §7.4 toner transfer (single-sided, ≥ 0.5 mm) or §7.3 photoresist or §7.5 CNC milling |
 | Bend/fold, wearable, camera/display tail | §7.6 Flex (rigid-flex if components need rigid islands — specialist fab) |
 | High-power LED / power stage, heat is the problem | §7.6 Metal-core |
 | 0.4–0.5 mm BGA, phone-class density | §7.6 HDI (escalate) |
@@ -1273,8 +1295,8 @@ Windows PC, with no installation). See `kit/README.md` for full usage.
 | `drc_check.py` | Unrouted nets, trace width, via drill/pad, annular ring, 90° corners, copper-to-edge, clearance and shorts (different nets, same layer; zones not covered, `kicad-cli pcb drc` still required) — on a raw `.kicad_pcb` |
 | `bom_check.py` | Missing MPN / footprint / value, duplicate reference, quantity mismatch, missing LCSC — on a BOM CSV |
 | `trace_width.py` | IPC-2221 trace width for a current (single value, table, or a CSV of nets) |
-| `rules_check.py` | Spec-first lint (§2): pin on two nets, unknown reference, unconnected power pin, missing decoupling / bulk cap, I2C without pull-up, single-pin net |
-| `fix_corners.py` | **Fixer (not a checker):** chamfers 90° corners to 45° in a `.kicad_pcb` — writes `<name>.fixed.kicad_pcb` by default, `--in-place` only with a `.bak` backup, `--dry-run` changes nothing; acute angles are reported, never fixed |
+| `rules_check.py` | Spec-first lint (§2): pin on two nets, unknown reference, pin not in the part's pin list (`unknown-pin`), unconnected power pin, forbidden 3-layer board / unsupported layer count, missing decoupling / bulk cap, I2C without pull-up, single-pin net. Bad spec data (wrong types, NaN, strings where lists belong) is reported as a clean error, never a traceback |
+| `fix_corners.py` | **Fixer (not a checker):** chamfers 90° corners to 45° in a `.kicad_pcb` — writes `<name>.fixed.kicad_pcb` by default, `--in-place` only with a `.bak` backup, `--dry-run` changes nothing; acute angles are reported, never fixed. Post-fix regression check (v1.2.3): DRC errors before vs after — warns loudly and exits 1 if the fix made the board worse |
 | `run_all.py` | Runs all four checks on the example files — or on your own board with `--pcb` / `--bom` / `--nets` / `--spec` — and prints one summary |
 
 **Rules are user-editable:** all thresholds live in `kit/config.json`
@@ -1284,10 +1306,13 @@ are the skill's design-to values (stricter than fab minimums).
 **Every script prints an audit log at the end:** script name and
 version, start time, input file with SHA-256, config file with
 SHA-256, checks that ran, checks skipped and why, finding counts, and
-the final result. **The log is the proof the check ran.**
+the final result. **The log is the proof the check ran.** Since v1.2.3
+the audit log goes to **stderr**, never stdout — with `--json`, stdout
+is parseable JSON only.
 
 **Exit codes (all scripts):** `0` = pass (warnings allowed),
-`1` = fail (at least one error), `2` = setup missing (file not found,
+`1` = fail (at least one error — including a malformed spec, and a
+`fix_corners.py` regression), `2` = setup missing (file not found,
 unparseable file, bad config).
 
 ---
