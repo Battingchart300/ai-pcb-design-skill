@@ -2,9 +2,32 @@
 
 Teach AI models to design PCBs — from a single prompt to a manufacturable board: schematic, layout, DRC checks, KiCad 10+ output and scripts.
 
-**Version:** 1.2.4 — 2026-11-24
+**Version:** 1.2.5 — 2026-11-24
 
 ## Changelog
+
+### v1.2.5 — 2026-11-24
+
+Codex audit fixes (ChatGPT Codex / GPT-6 audit of v1.2.4 — 160 tests,
+compared with KiCad 9.0.2):
+
+- **`fix_corners.py`**: a chamfer never disconnects a pad — one that
+  would is reverted and reported (`corners_reverted`). New segments
+  write the numeric net id only (`(net <id>)`); KiCad 9.0.2 refused
+  the old name form. The regression check now compares DRC on the
+  ORIGINAL input (`--in-place` used to compare the file with itself).
+  `--output` pointing at the input file is refused without
+  `--in-place` (which writes a `.bak` backup first).
+- **`drc_check.py`**: real per-net connectivity (union-find over
+  pads, segments, arcs and vias) — two distant pads of one net with
+  no path between them now FAIL as `unrouted-net`. A via is checked
+  on every layer it spans, not just F.Cu/B.Cu. Edge clearance is
+  measured from the copper edge (centreline minus half the trace
+  width).
+- **Example counts changed** (all new errors are genuine
+  `unrouted-net` findings): `sample.kicad_pcb` 14 → **24 errors**,
+  `sample_clearance.kicad_pcb` 5 → **13**, `sample_rotated.kicad_pcb`
+  0 → **2** (still 0 shorts — the rotation fix holds).
 
 ### v1.2.4 — 2026-11-24
 
@@ -26,7 +49,10 @@ every kit script):
   693 false shorts on the Olimex ESP32-EVB reference board. After the
   fix the EVB has **1 real short**. New example
   `kit/examples/sample_rotated.kicad_pcb` (a rotated footprint) passes
-  0 / 0. The 14 / 5 example numbers are unchanged.
+  0 shorts (the rotation fix holds) but now reports 2 unrouted errors
+  — two footprints with no segments between them, which is expected.
+  The example numbers changed: sample 14 → 24 errors,
+  sample_clearance 5 → 13 (new unrouted-net findings).
 - **`trace_width.py`**: internal-layer factor corrected to **~2.6×**
   (was "~2×" in the script while SKILL.md §5.2 already proved 2.6×),
   and the 5 A table entry corrected to **2.78 mm** (was 2.50 mm —
@@ -48,7 +74,7 @@ every kit script):
 - **`fix_corners.py`**: post-fix **regression check** — after writing
   the fixed board it runs `drc_check.py` on the input and the output
   and compares error counts. On the example board the fix takes DRC
-  from 14 to 15 errors (the chamfer splits one undersized trace into
+  from 24 to 25 errors (the chamfer splits one undersized trace into
   three segments, each counted separately) — the script now warns
   loudly, keeps the `.bak` / untouched input, and exits 1 instead of
   silently claiming an improvement. Also new: `--json` output.
