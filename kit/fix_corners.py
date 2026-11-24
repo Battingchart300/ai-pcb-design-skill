@@ -21,6 +21,12 @@ Safety (skill rule G8 — never destroy the user's work):
   - --in-place is allowed only with an automatic backup <name>.bak
     written before the input is touched. If nothing needs fixing,
     --in-place does not touch the file at all.
+  - --output pointing at the input file is refused unless --in-place
+    is also given (otherwise the backup protection would be bypassed).
+  - A chamfer never disconnects a pad or via: after each chamfer the
+    script checks that every pad/via that was connected before still
+    is; if a chamfer would disconnect one, that chamfer is reverted
+    and reported (KEPT), and the original segments are kept.
   - --dry-run prints what would change and writes nothing.
   - Acute angles (< 90 degrees) are NOT fixed — they are reported as
     manual work. The script never moves components, vias or pads, and
@@ -30,16 +36,16 @@ After fixing, always re-run drc_check.py on the output: the corner-90
 warnings must be 0. A human reviews the result before the board is
 used (the fix is a proposal, not a proof).
 
-Regression check (new in v1.2.3): after writing the fixed board, this
-script runs drc_check.py on the input AND on the output and compares
-the error counts. A chamfer can create a new clearance error even
-while it removes a corner — on the example board the DRC errors went
-14 -> 15 after a fix. If the output has MORE errors than the input,
-the script prints a loud REGRESSION WARNING, keeps the .bak backup
-(--in-place) or the untouched input (default mode), and exits 1.
-It never silently claims an improvement. With --dry-run there is no
-output file, so the regression check is skipped; if drc_check.py is
-missing, the check is skipped with a note.
+Regression check (new in v1.2.3): this script runs drc_check.py on
+the input BEFORE writing anything, and on the output after writing,
+and compares the error counts. A chamfer can create a new clearance
+error even while it removes a corner — on the example board the DRC
+errors went 14 -> 15 after a fix. If the output has MORE errors than
+the input, the script prints a loud REGRESSION WARNING, keeps the
+.bak backup (--in-place) or the untouched input (default mode), and
+exits 1. It never silently claims an improvement. With --dry-run
+there is no output file, so the regression check is skipped; if
+drc_check.py is missing, the check is skipped with a note.
 
 Usage:
     python fix_corners.py board.kicad_pcb [--config config.json]
@@ -64,7 +70,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.4"
+VERSION = "1.2.5"
 SCRIPT = "fix_corners"
 
 MIN_CHAMFER_MM = 0.05  # a chamfer shorter than this is not worth cutting
@@ -271,6 +277,28 @@ def angle_between(da, db):
     return math.degrees(math.acos(cosang))
 
 
+def _rotate(pt, angle_deg):
+    """Rotate a point by angle_deg (standard math rotation). Callers pass
+    KiCad angles already negated, because KiCad's board coordinates are
+    Y-down (same convention as drc_check.py)."""
+    rad = math.radians(angle_deg)
+    cos_a, sin_a = math.cos(rad), math.sin(rad)
+    return (pt[0] * cos_a - pt[1] * sin_a,
+            pt[0] * sin_a + pt[1] * cos_a)
+
+
+def _point_seg_dist(p, a, b):
+    """Distance from point p to segment a-b."""
+    ab = (b[0] - a[0], b[1] - a[1])
+    denom = ab[0] * ab[0] + ab[1] * ab[1]
+    if denom == 0:
+        return math.hypot(p[0] - a[0], p[1] - a[1])
+    t = max(0.0, min(1.0, ((p[0] - a[0]) * ab[0] +
+                            (p[1] - a[1]) * ab[1]) / denom))
+    cx, cy = a[0] + t * ab[0], a[1] + t * ab[1]
+    return math.hypot(p[0] - cx, p[1] - cy)
+
+
 def fix_board(path, config):
     """Find and chamfer 90-degree corners.
 
@@ -306,6 +334,88 @@ def fix_board(path, config):
         if isinstance(node, list) and len(node) == 3 and node[0] == "net" \
                 and isinstance(node[1], int) and isinstance(node[2], str):
             declared[node[1]] = node[2]
+
+    # --- connection points: pads and vias (disconnect guard) ------------
+    # A chamfer shortens two segments at a corner; if a small pad or a
+    # via sits exactly at that corner, the shortened segments (and the
+    # new diagonal) can end up not touching it at all. Positions never
+    # move, so these are collected once from the original file.
+    copper_order = []
+    layers_node = child(root, "layers")
+    if layers_node:
+        for item in layers_node[1:]:
+            if isinstance(item, list) and len(item) >= 2 and \
+                    isinstance(item[1], str) and item[1].endswith(".Cu") \
+                    and item[1] not in copper_order:
+                copper_order.append(item[1])
+    if not copper_order:
+        copper_order = ["F.Cu", "B.Cu"]
+
+    def expand_span(names):
+        """Expand a via/pad layer set to the full span it covers: a
+        plated through hole listed as F.Cu + B.Cu spans every copper
+        layer between them (same rule as drc_check.py)."""
+        out = set()
+        for name in names:
+            if name == "*.Cu":
+                out |= set(copper_order)
+            elif isinstance(name, str) and name.endswith(".Cu"):
+                out.add(name)
+        ordered = [l for l in copper_order if l in out]
+        if len(ordered) >= 2:
+            return set(copper_order[copper_order.index(ordered[0]):
+                                    copper_order.index(ordered[-1]) + 1])
+        return out
+
+    conn_points = []  # {desc, net, layers, centre, radius}
+    for fp in find_nodes(root, "footprint"):
+        fp_at = child(fp, "at")
+        if not fp_at:
+            continue
+        fx, fy = float(fp_at[1]), float(fp_at[2])
+        frot = float(fp_at[3]) if len(fp_at) > 3 and isinstance(fp_at[3], (int, float)) else 0.0
+        for pad in find_nodes(fp, "pad"):
+            net = child_value(pad, "net", 1)
+            if not isinstance(net, int) or net == 0:
+                continue
+            at = child(pad, "at")
+            size = child(pad, "size")
+            layers = child(pad, "layers")
+            if not at or not size:
+                continue
+            px, py = float(at[1]), float(at[2])
+            sx, sy = float(size[1]), float(size[2])
+            cu = expand_span(layers[1:]) if layers else set()
+            if not cu:
+                continue
+            shape = pad[3] if len(pad) > 3 and isinstance(pad[3], str) else ""
+            if shape == "circle":
+                radius = sx / 2.0
+            elif shape == "oval":
+                radius = max(sx, sy) / 2.0
+            else:  # rect, roundrect, custom: bounding circle
+                radius = math.hypot(sx, sy) / 2.0
+            rx, ry = _rotate((px, py), -frot)
+            conn_points.append({
+                "desc": f"pad '{pad[1]}' on net '{declared.get(net, str(net))}'",
+                "net": net, "layers": cu,
+                "centre": (fx + rx, fy + ry), "radius": radius})
+    for via in find_nodes(root, "via"):
+        net = child_value(via, "net", 1)
+        at = child(via, "at")
+        size = child_value(via, "size", 1)
+        layers = child(via, "layers")
+        if not isinstance(net, int) or net == 0 or not at \
+                or not isinstance(size, (int, float)):
+            continue
+        cu = expand_span(layers[1:]) if layers else set(copper_order)
+        if not cu:
+            continue
+        conn_points.append({
+            "desc": f"via on net '{declared.get(net, str(net))}'",
+            "net": net, "layers": cu,
+            "centre": (float(at[1]), float(at[2])),
+            "radius": float(size) / 2.0})
 
     # --- collect segments in document order, with their raw spans ---------
     seg_nodes = list(find_nodes(root, "segment"))
@@ -346,6 +456,8 @@ def fix_board(path, config):
     acute = []          # (net_name, vertex, angle) — manual work
     skipped_short = []  # (net_name, vertex) — chamfer below 0.05 mm
     ambiguous = []      # (net_name, vertex) — 3+ segments at one vertex
+    reverted = []       # (net_name, vertex, [descs]) — chamfer would
+                        # disconnect a pad/via, so it was reverted
     handled = set()     # vertices already reported as acute/ambiguous/
                         # too short — their angles never change, so the
                         # loop must not retry them forever
@@ -367,9 +479,24 @@ def fix_board(path, config):
             c[1] = point[0]
             c[2] = point[1]
 
+    def _touches(point, seg_list):
+        """True if any segment in seg_list touches the connection point:
+        same net, shared copper layer, centreline within the point's
+        radius plus half the trace width (plus 0.01 mm tolerance)."""
+        for seg in seg_list:
+            if seg["net"] != point["net"]:
+                continue
+            if seg["layer"] not in point["layers"]:
+                continue
+            d = _point_seg_dist(point["centre"], seg["start"], seg["end"])
+            if d <= point["radius"] + seg["width"] / 2.0 + 0.01:
+                return True
+        return False
+
     if not enabled:
         report = {"fixed": fixed, "acute": acute,
                   "skipped_short": skipped_short, "ambiguous": ambiguous,
+                  "reverted": reverted,
                   "segments_total": len(segments), "disabled": True}
         return raw, report
 
@@ -438,6 +565,21 @@ def fix_board(path, config):
         cut_a = (vertex[0] + ua[0] * chamfer, vertex[1] + ua[1] * chamfer)
         cut_b = (vertex[0] + ub[0] * chamfer, vertex[1] + ub[1] * chamfer)
 
+        # Disconnect guard: snapshot which connection points near this
+        # vertex are touched right now. Only points within reach of the
+        # chamfer can change status — the rest of each segment is
+        # untouched. If any point loses its last touch, revert.
+        reach = chamfer + max(a["width"], b["width"]) / 2.0 + 1.0
+        nearby = [p for p in conn_points
+                  if p["net"] == net_id
+                  and math.hypot(p["centre"][0] - vertex[0],
+                                 p["centre"][1] - vertex[1]) <= reach + p["radius"]]
+        before_touch = {id(p): _touches(p, segments) for p in nearby}
+        orig_a = (a["start"], a["end"])
+        orig_b = (b["start"], b["end"])
+        orig_text_a = current_text[a["origin"]]
+        orig_text_b = current_text[b["origin"]]
+
         # Shorten the two segments: replace the vertex end with the cut.
         def shorten(seg, vertex, cut):
             if abs(seg["start"][0] - vertex[0]) < 0.001 \
@@ -455,9 +597,11 @@ def fix_board(path, config):
         # Diagonal between the two cut points.
         diag_width = min(a["width"], b["width"])
         diag_net = a["net"] if a["net"] is not None else b["net"]
-        if isinstance(diag_net, int):
-            net_child = ["net", diag_net, declared.get(diag_net, "")]
-        elif diag_net is not None:
+        # A segment's (net ...) child is (net <id>) ONLY — the 3-item
+        # form (net <id> "<name>") is valid only in the top-level net
+        # declarations. Writing the name here made KiCad refuse the
+        # file (fixed 2026-11-24, audit finding).
+        if diag_net is not None:
             net_child = ["net", diag_net]
         else:
             net_child = None
@@ -477,8 +621,6 @@ def fix_board(path, config):
             else b["origin"]
         insert_after[after].append(diag_text)
 
-        fixed.append((declared.get(net_id, str(net_id)), vertex, chamfer))
-
         # Replace the two consumed segments in the working list with
         # their shortened versions plus the new diagonal.
         diag_seg = {
@@ -495,6 +637,28 @@ def fix_board(path, config):
         keep.extend([a, b, diag_seg])
         segments = keep
 
+        lost = [p for p in nearby
+                if before_touch[id(p)] and not _touches(p, segments)]
+        if lost:
+            # Revert this chamfer: restore both segments (geometry,
+            # node points and serialised text) and drop the diagonal.
+            a["start"], a["end"] = orig_a
+            b["start"], b["end"] = orig_b
+            set_node_point(a["node"], "start", orig_a[0])
+            set_node_point(a["node"], "end", orig_a[1])
+            set_node_point(b["node"], "start", orig_b[0])
+            set_node_point(b["node"], "end", orig_b[1])
+            current_text[a["origin"]] = orig_text_a
+            current_text[b["origin"]] = orig_text_b
+            insert_after[after].pop()
+            segments = [s for s in segments if s is not diag_seg]
+            handled.add(key)
+            reverted.append((declared.get(net_id, str(net_id)), vertex,
+                             [p["desc"] for p in lost]))
+            continue
+
+        fixed.append((declared.get(net_id, str(net_id)), vertex, chamfer))
+
     # --- rebuild the file text from the original, with replacements ------
     parts = []
     pos = 0
@@ -509,6 +673,7 @@ def fix_board(path, config):
 
     report = {"fixed": fixed, "acute": acute,
               "skipped_short": skipped_short, "ambiguous": ambiguous,
+              "reverted": reverted,
               "segments_total": len(seg_nodes), "disabled": False}
     return fixed_text, report
 
@@ -586,6 +751,18 @@ def main(argv=None):
         except (ValueError, OSError) as exc:
             raise SetupError(f"cannot read config file: {exc}")
         input_sha = sha256_of(board_path)  # before any write happens
+        if not in_place:
+            # --output that resolves to the input file would silently
+            # overwrite it without the --in-place .bak backup.
+            try:
+                same_file = out_path.resolve() == board_path.resolve()
+            except OSError:
+                same_file = False
+            if same_file:
+                raise SetupError(
+                    f"--output {out_path} is the same file as the input "
+                    "— refusing to overwrite it without --in-place "
+                    "(which writes a .bak backup first)")
         fixed_text, report = fix_board(board_path, config)
     except ParseError as exc:
         print(f"PARSE ERROR: {exc}", file=sys.stderr)
@@ -611,6 +788,13 @@ def main(argv=None):
 
     wrote = None
     backup = None
+    # Regression check, part 1: the BEFORE count must come from the
+    # ORIGINAL file, so it is taken before anything is written. (With
+    # --in-place the input IS the output path, so reading it after the
+    # write would compare the file with itself.)
+    before_counts = None
+    if not dry_run and not report.get("disabled") and fixed_count:
+        before_counts = drc_error_counts(board_path)
     if not dry_run and not report.get("disabled"):
         if fixed_count:
             if in_place:
@@ -633,7 +817,7 @@ def main(argv=None):
     regression = None  # None = skipped, True = worse, False = not worse
     regression_detail = ""
     if wrote is not None:
-        before = drc_error_counts(board_path)
+        before = before_counts
         after = drc_error_counts(wrote)
         if before is None or after is None:
             regression_detail = ("regression check skipped "
@@ -647,7 +831,13 @@ def main(argv=None):
         regression_detail = "regression check skipped (dry run — no output file)"
 
     exit_code = 0
-    result_text = "FIXED" if fixed_count else "NO CHANGE"
+    if fixed_count:
+        result_text = "FIXED"
+    elif report["reverted"]:
+        result_text = (f"NO SAFE CHANGES — {len(report['reverted'])} "
+                       "corner(s) kept, chamfer would disconnect a pad/via")
+    else:
+        result_text = "NO CHANGE"
     if regression:
         exit_code = 1
         result_text = "FIXED WITH REGRESSION"
@@ -673,6 +863,12 @@ def main(argv=None):
             "acute_corners": acute_count,
             "skipped_short": len(report["skipped_short"]),
             "ambiguous": len(report["ambiguous"]),
+            "corners_reverted": len(report["reverted"]),
+            "reverted": [
+                {"net": net_name, "vertex": [vertex[0], vertex[1]],
+                 "would_disconnect": descs}
+                for net_name, vertex, descs in report["reverted"]
+            ],
             "segments_total": report["segments_total"],
             "regression": regression,
             "regression_detail": regression_detail,
@@ -701,6 +897,11 @@ def main(argv=None):
             print(f"MANUAL  vertex on net '{net_name}' at "
                   f"({vertex[0]:.2f}, {vertex[1]:.2f}) — 3+ segments meet "
                   "here, fix by hand")
+        for net_name, vertex, descs in report["reverted"]:
+            print(f"KEPT    corner-90 on net '{net_name}' at "
+                  f"({vertex[0]:.2f}, {vertex[1]:.2f}) — chamfer would "
+                  f"disconnect {', '.join(descs)}, kept the original "
+                  "segments")
         if dry_run:
             print(f"\nDRY RUN — would fix {fixed_count} corner(s), "
                   f"write to: {out_path}")
@@ -713,6 +914,8 @@ def main(argv=None):
             print("Fixed per net: " + ", ".join(
                 f"{name}: {count}" for name, count in sorted(per_net.items())))
         print(f"Acute corners reported (manual): {acute_count}")
+        print(f"Corners reverted (would disconnect a pad/via): "
+              f"{len(report['reverted'])}")
         if regression_detail:
             print(f"Regression check: {regression_detail}")
 
@@ -733,6 +936,8 @@ def main(argv=None):
         print("output: none (nothing to fix)", file=sys.stderr)
     print(f"segments in file: {report['segments_total']}", file=sys.stderr)
     print(f"corners fixed: {fixed_count}", file=sys.stderr)
+    print(f"corners reverted (would disconnect a pad/via): "
+          f"{len(report['reverted'])}", file=sys.stderr)
     print(f"acute corners (manual): {acute_count}", file=sys.stderr)
     print(f"skipped (too short): {len(report['skipped_short'])}", file=sys.stderr)
     print(f"ambiguous vertices (manual): {len(report['ambiguous'])}", file=sys.stderr)
