@@ -7,9 +7,20 @@ small scripts do, and a human reviews the result.**
 Standard library only. No installation, no dependencies. Runs on Windows,
 macOS and Linux with Python 3.8+.
 
-**Version:** 1.2.4 — 2026-11-24
+**Version:** 1.2.5 — 2026-11-24
 
 ## Changelog
+
+### v1.2.5 — 2026-11-24
+
+Codex audit fixes (see SKILL.md / README.md): `fix_corners.py`
+never disconnects a pad (reverts the chamfer), writes numeric net
+ids only, measures the regression against the original input, and
+refuses `--output` equal to the input without `--in-place`;
+`drc_check.py` checks real per-net connectivity, vias on every
+spanned layer, and edge clearance from the copper edge. Example
+counts: sample 14 → 24 errors, sample_clearance 5 → 13,
+sample_rotated 0 → 2 (all new errors are `unrouted-net`).
 
 ### v1.2.4 — 2026-11-24
 
@@ -69,7 +80,7 @@ Review fixes (Claude AI + ChatGPT reviews of v1.2.2):
 - **`fix_corners.py`**: post-fix **regression check** — after writing
   the fixed board it runs `drc_check.py` on the input and the output
   and compares error counts. On the example board the fix takes DRC
-  from 14 to 15 errors, so the script now prints a loud REGRESSION
+  from 24 to 25 errors, so the script now prints a loud REGRESSION
   WARNING, keeps the `.bak` / untouched input, and exits 1 instead of
   silently claiming an improvement. The +1 is a counting effect, not
   a new physical defect: the chamfer splits one 0.12 mm CANH trace
@@ -216,11 +227,15 @@ script picks them up. The values are the skill's **design-to values**
 The files in `examples/` contain **intentional errors** (they demonstrate
 what the checks catch). The expected result for each is FAIL:
 
-- `sample.kicad_pcb` → `drc_check.py`: **14 errors, 2 warnings**
+- `sample.kicad_pcb` → `drc_check.py`: **24 errors, 2 warnings**
   - 2× trace too narrow (CANH, 0.12 mm < 0.20 mm)
   - 1× via drill too small (0.20 mm < 0.30 mm)
   - 1× via pad too small (0.50 mm < 0.60 mm)
   - 1× unrouted net (`UNUSED_NET` declared, no copper)
+  - 10× unrouted net (new in v1.2.5 — real per-net connectivity:
+    +3V3 split into 5 groups, CANH into 4, CANL into 3, SDA into 2;
+    the sample traces were never connected, the old check only
+    flagged nets with no copper at all)
   - 1× warning: 90° corner on CANH
   - 1× warning: copper 0.20 mm from the board edge (< 0.30 mm)
   - 7× short (check 6, new in v1.2.1): the SDA trace crosses the
@@ -228,8 +243,10 @@ what the checks catch). The expected result for each is FAIL:
     the CANH via sits on the CANL trace; the GND and +3V3 pads touch
   - 2× clearance (check 6, new in v1.2.1): the SDA trace is 0.10 mm
     from the GND pad and from the CANH pad (< 0.20 mm)
-- `sample_clearance.kicad_pcb` → `drc_check.py`: **5 errors,
-  0 warnings** (check 6 only — every other check passes on this file)
+- `sample_clearance.kicad_pcb` → `drc_check.py`: **13 errors,
+  0 warnings** (5 from check 6 + 8× unrouted net, new in v1.2.5:
+  GND ×3, CANL ×2, CANH ×1, +3V3 ×1, SDA ×1 — every other check
+  passes on this file)
   - 1× clearance: GND trace 0.10 mm from the +3V3 trace
   - 1× short: CANH trace crosses the CANL trace (−0.30 mm overlap)
   - 1× clearance: GND trace 0.10 mm from the +3V3 via
@@ -253,15 +270,16 @@ what the checks catch). The expected result for each is FAIL:
   (110, 102), chamfer 0.50 mm) → writes `sample.fixed.kicad_pcb`.
   `drc_check.py` on the fixed file reports **0 `corner-90` warnings**
   (the other intentional errors in the sample remain — the fixer only
-  fixes corners, nothing else) — but **15 errors, 1 warning** in
-  total (was 14 / 2): the chamfer splits one undersized CANH trace
+  fixes corners, nothing else) — but **25 errors, 1 warning** in
+  total (was 24 / 2): the chamfer splits one undersized CANH trace
   into three segments and the per-segment trace-width check counts
   each one. `fix_corners.py` flags this with a REGRESSION WARNING
   and exits 1 (v1.2.3).
-- `sample_rotated.kicad_pcb` → `drc_check.py`: **0 errors,
-  0 warnings** — a rotated footprint that must NOT be reported as
-  shorted (regression test for the v1.2.3 rotation fix; before the
-  fix, rotated pads produced false shorts).
+- `sample_rotated.kicad_pcb` → `drc_check.py`: **2 errors,
+  0 warnings** — both are `unrouted-net` (two footprints with no
+  segments between them — expected); still **0 shorts**, which is
+  what this fixture tests (regression test for the v1.2.3 rotation
+  fix; before the fix, rotated pads produced false shorts).
 
 ## What the kit does NOT do
 
