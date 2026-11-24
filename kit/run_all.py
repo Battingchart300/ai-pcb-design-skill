@@ -34,7 +34,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.3"
+VERSION = "1.2.4"
 SCRIPT = "run_all"
 
 

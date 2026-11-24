@@ -7,9 +7,19 @@ small scripts do, and a human reviews the result.**
 Standard library only. No installation, no dependencies. Runs on Windows,
 macOS and Linux with Python 3.8+.
 
-**Version:** 1.2.3 — 2026-11-24
+**Version:** 1.2.4 — 2026-11-24
 
 ## Changelog
+
+### v1.2.4 — 2026-11-24
+
+Re-audit fixes (ChatGPT re-audit of v1.2.3):
+
+- **`rules_check.py`**: a power pin marked `no_connect` is now an
+  error (`power-pin-no-connect`) — a power pin must be connected to
+  a power net, it can never be no-connect. It used to pass silently.
+  New regression fixture `examples/regression_nc_power.json`
+  (must FAIL with that one error).
 
 ### v1.2.3 — 2026-11-24
 
@@ -260,3 +270,9 @@ The kit does not replace KiCad DRC (`kicad-cli pcb drc`) or ERC
 check: it reads the raw files and verifies the things a rule file can
 silently miss (a pin on two nets, a net class that matches no real net,
 a design rule aimed at a fab that is not the one being used).
+
+## Regression fixtures (audit 2026-11-24)
+
+- `examples/regression_nc_power.json` — a power pin (U1.1) marked
+  `no_connect`. Must FAIL with exactly one error,
+  `power-pin-no-connect` (ChatGPT re-audit P0: it used to pass).

@@ -35,6 +35,8 @@ Checks (the spec-first lint from the skill):
  11. Unknown pin — a pin referenced by a net, by no_connect or by a
      power pin that is not in the part's declared pin list
      (e.g. U1.99 on a QFN-56 with pins 1-56). ERROR. (New in v1.2.3.)
+ 12. Power pin in no_connect — a power pin must be connected to a
+     power net, it can never be no-connect. ERROR. (New in v1.2.4.)
 
 A value like "10uF", "100nF" or "4.7u" is parsed as a capacitance in uF.
 
@@ -59,7 +61,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.3"
+VERSION = "1.2.4"
 SCRIPT = "rules_check"
 
 CAP_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([unp]?)[fF]\s*$", re.IGNORECASE)
@@ -377,7 +379,14 @@ def check_spec(spec, config):
             if not PIN_NUM_RE.match(str(pnum)):
                 continue  # already reported once by check 0, do not repeat
             pin = f"{ref}.{pnum}"
-            if pin not in pin_to_nets and pin not in no_connect:
+            if pin in no_connect:
+                findings.append({"severity": "error", "check": "power-pin-no-connect",
+                                 "message": f"power pin {pin} of {ref} is "
+                                            "marked no_connect — a power pin "
+                                            "must be connected to a power net, "
+                                            "it can never be no-connect",
+                                 "location": f"part {ref}"})
+            elif pin not in pin_to_nets:
                 findings.append({"severity": "error", "check": "power-pin-unconnected",
                                  "message": f"power pin {pin} of {ref} is not "
                                             "connected to any net",
@@ -560,7 +569,7 @@ def main(argv=None):
     print("checks run: pin-on-two-nets, pin-net-and-nc, unknown-reference, "
           "pins-not-a-list, power-pins-not-a-list, pins-not-a-number, "
           "power-pin-not-a-number, net-pins-not-a-list, malformed-pin, "
-          "power-pin-unconnected, no-decoupling, no-bulk-cap, "
+          "power-pin-unconnected, power-pin-no-connect, no-decoupling, no-bulk-cap, "
           "i2c-no-pullup, single-pin-net, unconnected-pin, "
           "unknown-pin, forbidden-layer-count, unsupported-layer-count",
           file=sys.stderr)

@@ -64,7 +64,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.3"
+VERSION = "1.2.4"
 SCRIPT = "fix_corners"
 
 MIN_CHAMFER_MM = 0.05  # a chamfer shorter than this is not worth cutting
