@@ -7,9 +7,21 @@ small scripts do, and a human reviews the result.**
 Standard library only. No installation, no dependencies. Runs on Windows,
 macOS and Linux with Python 3.8+.
 
-**Version:** 1.2.1 — 2026-11-23
+**Version:** 1.2.2 — 2026-11-24
 
 ## Changelog
+
+### v1.2.2 — 2026-11-24
+
+- **`rules_check.py` (new check 0)**: `pins` / `power_pins` given as
+  a string is one error per part (`pins-not-a-list` /
+  `power_pins-not-a-list`); a list entry that is not a plain pin
+  number is one error (`pins-not-a-number`); `pins` in a net given
+  as a string is one error (`net-pins-not-a-list`). Bad values are
+  treated as empty afterwards, so checks 4 and 9 do not repeat the
+  same problem. Gemini test spec: 5 errors / 296 warnings → 7
+  errors / 0 warnings, still FAIL; ChatGPT reference spec still
+  0 / 0.
 
 ### v1.2.1 — 2026-11-23
 

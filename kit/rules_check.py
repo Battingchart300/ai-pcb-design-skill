@@ -49,7 +49,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 SCRIPT = "rules_check"
 
 CAP_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([unp]?)[fF]\s*$", re.IGNORECASE)
@@ -116,12 +116,56 @@ def check_spec(spec, config):
                              "location": f"part {ref}"})
         parts[ref] = part
 
+    # --- check 0: pins / power_pins / net pins must be lists of pin numbers --
+    # A model that writes pins as free text ("UNVERIFIED — verify ...") used to
+    # be iterated character by character, producing hundreds of misleading
+    # warnings (Gemini spec, 2026-11-23: 296 warnings from one string).
+    # Fail once per part / net instead, and treat the bad value as empty so
+    # later checks do not double-count it.
+    PIN_NUM_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+    for part in parts_list:
+        ref = part.get("ref") or "?"
+        for field in ("pins", "power_pins"):
+            value = part.get(field)
+            if value is None:
+                continue
+            if isinstance(value, str):
+                findings.append({"severity": "error", "check": f"{field}-not-a-list",
+                                 "message": f"part {ref} has {field} as text, "
+                                            f"not a list of pin numbers — use a list "
+                                            f"like [\"1\", \"2\"], or [] while the "
+                                            f"pinout is still UNVERIFIED",
+                                 "location": f"part {ref}"})
+            elif isinstance(value, list):
+                bad_entries = [e for e in value
+                               if not isinstance(e, str) or not PIN_NUM_RE.match(e)]
+                if bad_entries:
+                    findings.append({"severity": "error", "check": f"{field}-not-a-number",
+                                     "message": f"part {ref} has free-text {field} "
+                                                f"entries {bad_entries} — a pin entry "
+                                                f"must be a pin number from the "
+                                                f"datasheet (e.g. \"3\"), not a "
+                                                f"description; leave the list empty "
+                                                f"until it is verified",
+                                     "location": f"part {ref}"})
+    for net in nets_list:
+        value = net.get("pins")
+        if value is not None and not isinstance(value, list):
+            findings.append({"severity": "error", "check": "net-pins-not-a-list",
+                             "message": f"net '{net.get('name', '')}' has pins as "
+                                        "text, not a list — use a list like "
+                                        "[\"U1.1\", \"C1.1\"]",
+                             "location": f"net {net.get('name', '')}"})
+
+    def _pin_list(value):
+        return value if isinstance(value, list) else []
+
     # --- pin usage map ------------------------------------------------------
     pin_to_nets = {}   # "U1.3" -> [net names]
     net_names = []
     for net in nets_list:
         name = net.get("name", "")
-        pins = net.get("pins") or []
+        pins = _pin_list(net.get("pins")) or []
         net_names.append(name)
         for pin in pins:
             pin_to_nets.setdefault(pin, []).append(name)
@@ -160,7 +204,9 @@ def check_spec(spec, config):
 
     # --- check 4: power pins not connected ----------------------------------
     for ref, part in parts.items():
-        for pnum in part.get("power_pins") or []:
+        for pnum in _pin_list(part.get("power_pins")):
+            if not PIN_NUM_RE.match(str(pnum)):
+                continue  # already reported once by check 0, do not repeat
             pin = f"{ref}.{pnum}"
             if pin not in pin_to_nets and pin not in no_connect:
                 findings.append({"severity": "error", "check": "power-pin-unconnected",
@@ -241,7 +287,9 @@ def check_spec(spec, config):
 
     # --- check 9: declared pins in no net and not no-connect ---------------
     for ref, part in parts.items():
-        for pnum in part.get("pins") or []:
+        for pnum in _pin_list(part.get("pins")):
+            if not PIN_NUM_RE.match(str(pnum)):
+                continue  # already reported once by check 0, do not repeat
             pin = f"{ref}.{pnum}"
             if pin not in pin_to_nets and pin not in no_connect:
                 findings.append({"severity": "warning", "check": "unconnected-pin",
@@ -328,7 +376,8 @@ def main(argv=None):
     print(f"input: {spec_path} (sha256 {sha256_of(spec_path)[:16]}...)")
     print(f"config: {config_path} (sha256 {sha256_of(config_path)[:16]}...)")
     print("checks run: pin-on-two-nets, pin-net-and-nc, unknown-reference, "
-          "malformed-pin, power-pin-unconnected, no-decoupling, no-bulk-cap, "
+          "pins-not-a-list, power-pins-not-a-list, pins-not-a-number, " 
+          "power-pin-not-a-number, net-pins-not-a-list, malformed-pin, power-pin-unconnected, no-decoupling, no-bulk-cap, "
           "i2c-no-pullup, single-pin-net, unconnected-pin")
     print(f"checks skipped: {'; '.join(skipped) if skipped else 'none'}")
     print(f"findings: {len(errors)} error(s), {len(warnings)} warning(s)")
