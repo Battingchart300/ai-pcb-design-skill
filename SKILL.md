@@ -5,8 +5,9 @@ description: Teaches an AI assistant to design PCBs from a single prompt to a ma
 
 # ai-pcb-design-skill
 
-**Version:** 1.2.4 — 2026-11-24
+**Version:** 1.2.5 — 2026-11-24
 
+**v1.2.5 — 2026-11-24 (Codex audit fixes, ChatGPT Codex / GPT-6 audit of v1.2.4, 160 tests + KiCad 9.0.2):** `fix_corners.py` never disconnects a pad — a chamfer that would leave a pad or via unconnected is reverted and reported (`corners_reverted`); new segments write the numeric net id only (`(net <id>)`, KiCad 9.0.2 refused the old name form); the regression check now compares DRC on the ORIGINAL input (before, `--in-place` compared the file with itself); `--output` pointing at the input is refused without `--in-place`. `drc_check.py` now verifies real connectivity per net (union-find over pads, segments, arcs and vias — two distant pads of one net no longer pass); a via is checked on every layer it spans (not just F.Cu/B.Cu); edge clearance is measured from the copper edge (centreline minus half the trace width). Example counts changed: `sample.kicad_pcb` 14 → **24 errors**, `sample_clearance.kicad_pcb` 5 → **13**, `sample_rotated.kicad_pcb` 0 → **2** (all new errors are genuine `unrouted-net` findings; the rotated fixture still reports 0 shorts).
 **v1.2.4 — 2026-11-24 (re-audit fixes, ChatGPT re-audit of v1.2.3):**
 `rules_check.py` now errors on a power pin marked no_connect
 (`power-pin-no-connect` — a power pin must be connected to a power
@@ -419,12 +420,13 @@ corners to manual re-routing:
 - **Regression check (v1.2.3):** after writing the fixed board,
   `fix_corners.py` runs `drc_check.py` on the input and on the output
   and compares the error counts. A chamfer can make the count go up
-  (on the example board DRC went 14 → 15 errors: the chamfer splits
+  (on the example board DRC went 24 → 25 errors: the chamfer splits
   one undersized trace into three segments, and the per-segment
   trace-width check counts each one). If the output has more errors
   than the input, the script prints a loud REGRESSION WARNING, keeps
   the `.bak` / untouched input, and exits 1 — it never silently
   claims an improvement.
+- **Pad safety (v1.2.5):** a chamfer that would disconnect a pad or a via is reverted — the corner is kept as-is and reported in `corners_reverted`, never silently cut.
 - **Limits:** only 90° → 45° chamfers. The script never moves
   components, vias or pads, never changes a net, a width or a layer,
   and never touches acute angles (< 90°) — those are reported as
