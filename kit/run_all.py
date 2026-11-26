@@ -34,8 +34,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.5"
+VERSION = "1.2.6"
 SCRIPT = "run_all"
+CREDIT = "Made by PTS6845 — https://battingchart300.github.io"
 
 
 def main(argv=None):
@@ -128,6 +129,7 @@ def main(argv=None):
               file=sys.stderr)
     print(f"result: {'PASS' if worst == 0 else 'FAIL' if worst == 1 else 'SETUP ERROR'} "
           f"(exit {worst})", file=sys.stderr)
+    print(CREDIT, file=sys.stderr)
     return worst
 
 

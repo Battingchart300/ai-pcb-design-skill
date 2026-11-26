@@ -4,7 +4,12 @@
 Checks (all values come from config.json):
   1. Missing manufacturer part number (MPN) — a part with no MPN cannot
      be verified against a datasheet, so it is UNVERIFIED and an error.
-  2. Missing footprint — the part cannot be placed or ordered.
+     When MPN is required (config bom.require_mpn) a BOM with no MPN
+     column at all is an error too — the check must not be silently
+     skipped. A value of "UNVERIFIED" in the MPN column counts as
+     missing (it is not a part number).
+  2. Missing footprint — the part cannot be placed or ordered. A value
+     of "UNVERIFIED" in the Footprint column counts as missing.
   3. Missing value — a part with no value is incomplete.
   4. Duplicate reference — the same designator listed twice.
   5. Quantity mismatch — the number of designators in the Reference
@@ -35,7 +40,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.5"
+VERSION = "1.2.6"
 SCRIPT = "bom_check"
 
 REF_PATTERN = re.compile(r"^[A-Z]{1,3}\d+$")
@@ -88,8 +93,19 @@ def check_bom(path, config):
     for needed in ("reference", "value", "footprint", "quantity"):
         if needed not in headers:
             raise SetupError(f"BOM is missing the required column '{needed}'")
+    # A BOM with no MPN column cannot be checked for part numbers: when
+    # MPN is required that is an error, not a silent skip (a BOM without
+    # an MPN column used to PASS the MPN check by never running it).
     if "mpn" not in headers:
-        skipped.append("MPN check (no MPN column in BOM)")
+        if require_mpn:
+            findings.append({
+                "severity": "error", "check": "missing-mpn-column",
+                "message": "BOM has no MPN column although MPN is required "
+                           "(config bom.require_mpn) — the parts cannot be "
+                           "checked against datasheets",
+                "location": "header"})
+        else:
+            skipped.append("MPN check (no MPN column in BOM)")
     if "lcsc" not in headers:
         skipped.append("LCSC check (no LCSC column in BOM)")
 
@@ -151,17 +167,20 @@ def check_bom(path, config):
                 "message": "no Value — the part is incomplete",
                 "location": f"line {lineno} ({', '.join(refs)})"})
 
-        if require_footprint and not footprint:
+        if require_footprint and (not footprint or
+                                  footprint.strip().upper() == "UNVERIFIED"):
             findings.append({
                 "severity": "error", "check": "missing-footprint",
-                "message": "no Footprint — the part cannot be placed",
+                "message": "no Footprint (or UNVERIFIED) — the part cannot "
+                           "be placed",
                 "location": f"line {lineno} ({', '.join(refs)})"})
 
-        if require_mpn and "mpn" in headers and not mpn:
+        if require_mpn and "mpn" in headers and (not mpn or
+                                                 mpn.strip().upper() == "UNVERIFIED"):
             findings.append({
                 "severity": "error", "check": "missing-mpn",
-                "message": "no MPN — UNVERIFIED, the part cannot be checked "
-                           "against a datasheet",
+                "message": "no MPN (or UNVERIFIED) — the part cannot be "
+                           "checked against a datasheet",
                 "location": f"line {lineno} ({', '.join(refs)})"})
 
         if fab == "jlcpcb" and "lcsc" in headers and not lcsc:

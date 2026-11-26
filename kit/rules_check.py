@@ -37,6 +37,12 @@ Checks (the spec-first lint from the skill):
      (e.g. U1.99 on a QFN-56 with pins 1-56). ERROR. (New in v1.2.3.)
  12. Power pin in no_connect — a power pin must be connected to a
      power net, it can never be no-connect. ERROR. (New in v1.2.4.)
+ 13. Strict completeness — every part must have a non-empty value, a
+     non-empty footprint and a non-empty pins list; every net must have
+     at least one pin (an empty net is an error, a single-pin net stays
+     a warning under check 8); the board section must be present with a
+     name, a layer count and a fab. A spec of {"ref": "U1"} with empty
+     nets used to PASS. ERROR. (New in v1.2.6.)
 
 A value like "10uF", "100nF" or "4.7u" is parsed as a capacitance in uF.
 
@@ -61,7 +67,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.5"
+VERSION = "1.2.6"
 SCRIPT = "rules_check"
 
 CAP_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([unp]?)[fF]\s*$", re.IGNORECASE)
@@ -242,6 +248,78 @@ def check_spec(spec, config):
 
     def _pin_list(value):
         return value if isinstance(value, list) else []
+
+    # --- check 13: strict completeness ------------------------------------
+    # A spec with {"ref": "U1"} and empty nets used to PASS: nothing
+    # forced a value, a footprint, a pin list, a non-empty net or a board
+    # section. An incomplete spec is not a design — it is an error.
+    # (A pins value given as text is already reported once by check 0
+    # as pins-not-a-list, so it is not reported twice here.)
+    for part in parts_list:
+        if not isinstance(part, dict):
+            continue  # already reported once above as part-not-an-object
+        ref = part.get("ref") or "?"
+        value = part.get("value")
+        if not isinstance(value, str) or not value.strip():
+            findings.append({"severity": "error", "check": "part-missing-value",
+                             "message": f"part {ref} has no 'value' — every "
+                                        "part needs a value (e.g. "
+                                        "\"ESP32-S3\", \"10k\", \"100nF\")",
+                             "location": f"part {ref}"})
+        footprint = part.get("footprint")
+        if not isinstance(footprint, str) or not footprint.strip():
+            findings.append({"severity": "error", "check": "part-missing-footprint",
+                             "message": f"part {ref} has no 'footprint' — "
+                                        "every part needs a footprint from "
+                                        "the datasheet land pattern",
+                             "location": f"part {ref}"})
+        pins = part.get("pins")
+        if isinstance(pins, str):
+            pass  # already reported once by check 0 as pins-not-a-list
+        elif not isinstance(pins, list) or not pins:
+            findings.append({"severity": "error", "check": "part-no-pins",
+                             "message": f"part {ref} has no 'pins' list (or "
+                                        "it is empty) — every part needs its "
+                                        "pin numbers from the datasheet",
+                             "location": f"part {ref}"})
+    for net in nets_list:
+        if not isinstance(net, dict):
+            continue  # already reported once above as net-not-an-object
+        pins = net.get("pins")
+        if isinstance(pins, str):
+            continue  # already reported once by check 0 as net-pins-not-a-list
+        if not isinstance(pins, list) or not pins:
+            findings.append({"severity": "error", "check": "empty-net",
+                             "message": f"net '{net.get('name', '')}' has no "
+                                        "pins — a net with no pins connects "
+                                        "nothing; delete it or add its pins",
+                             "location": f"net {net.get('name', '')}"})
+    board_strict = spec.get("board")
+    if board_strict is None:
+        findings.append({"severity": "error", "check": "board-missing",
+                         "message": "spec has no 'board' section — a spec "
+                                    "needs {\"name\", \"layers\", \"fab\"}",
+                         "location": ""})
+    elif isinstance(board_strict, dict):
+        if (not isinstance(board_strict.get("name"), str)
+                or not board_strict.get("name").strip()):
+            findings.append({"severity": "error", "check": "board-missing-name",
+                             "message": "board has no 'name' — every board "
+                                        "needs a name",
+                             "location": "board"})
+        if "layers" not in board_strict:
+            findings.append({"severity": "error", "check": "board-missing-layers",
+                             "message": "board has no 'layers' — the layer "
+                                        "count is required (1, 2, 4, 6 or 8)",
+                             "location": "board"})
+        if (not isinstance(board_strict.get("fab"), str)
+                or not board_strict.get("fab").strip()):
+            findings.append({"severity": "error", "check": "board-missing-fab",
+                             "message": "board has no 'fab' — the fab method "
+                                        "(e.g. \"jlcpcb\") is required",
+                             "location": "board"})
+    # (a board that is not a dict is already board-not-an-object,
+    # reported by check 10 below)
 
     # --- pin usage map ------------------------------------------------------
     pin_to_nets = {}   # "U1.3" -> [net names]
@@ -571,7 +649,10 @@ def main(argv=None):
           "power-pin-not-a-number, net-pins-not-a-list, malformed-pin, "
           "power-pin-unconnected, power-pin-no-connect, no-decoupling, no-bulk-cap, "
           "i2c-no-pullup, single-pin-net, unconnected-pin, "
-          "unknown-pin, forbidden-layer-count, unsupported-layer-count",
+          "unknown-pin, forbidden-layer-count, unsupported-layer-count, "
+          "part-missing-value, part-missing-footprint, part-no-pins, "
+          "empty-net, board-missing, board-missing-name, "
+          "board-missing-layers, board-missing-fab",
           file=sys.stderr)
     print(f"checks skipped: {'; '.join(skipped) if skipped else 'none'}", file=sys.stderr)
     print(f"findings: {len(errors)} error(s), {len(warnings)} warning(s)", file=sys.stderr)

@@ -63,7 +63,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.5"
+VERSION = "1.2.6"
 SCRIPT = "drc_check"
 
 # ---------------------------------------------------------------------------

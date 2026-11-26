@@ -5,8 +5,9 @@ description: Teaches an AI assistant to design PCBs from a single prompt to a ma
 
 # ai-pcb-design-skill
 
-**Version:** 1.2.5 — 2026-11-24
+**Version:** 1.2.6 — 2026-11-25
 
+**v1.2.6 — 2026-11-25 (Wave-2 Codex audit fixes):** `bom_check.py` no longer skips the MPN check when the BOM has no MPN column (that is an error when MPN is required), and `UNVERIFIED` in the MPN or Footprint column counts as missing. `rules_check.py` now enforces strict completeness (new check 13): every part needs a value, a footprint and a non-empty pins list, every net needs at least one pin, and the board section must have a name, layers and fab — a spec of {"ref": "U1"} with empty nets no longer passes. `trace_width.py` rejects non-finite or non-positive numeric inputs (inf/NaN/zero/negative current, copper weight, temperature rise or actual width) with a clean error, and a header-only CSV now FAILs instead of passing with zero rows checked. Credit line added: "Made by PTS6845 — https://battingchart300.github.io" in the SKILL.md and README.md footers and in the `run_all.py` audit log (code constant CREDIT, no online check, no behaviour change, no --json schema change). Example results unchanged: spec.json 1 error / 3 warnings, sample_bom.csv 3 errors / 1 warning, nets.csv 1 fail, DRC samples 24 / 13 / 2 errors.
 **v1.2.5 — 2026-11-24 (Codex audit fixes, ChatGPT Codex / GPT-6 audit of v1.2.4, 160 tests + KiCad 9.0.2):** `fix_corners.py` never disconnects a pad — a chamfer that would leave a pad or via unconnected is reverted and reported (`corners_reverted`); new segments write the numeric net id only (`(net <id>)`, KiCad 9.0.2 refused the old name form); the regression check now compares DRC on the ORIGINAL input (before, `--in-place` compared the file with itself); `--output` pointing at the input is refused without `--in-place`. `drc_check.py` now verifies real connectivity per net (union-find over pads, segments, arcs and vias — two distant pads of one net no longer pass); a via is checked on every layer it spans (not just F.Cu/B.Cu); edge clearance is measured from the copper edge (centreline minus half the trace width). Example counts changed: `sample.kicad_pcb` 14 → **24 errors**, `sample_clearance.kicad_pcb` 5 → **13**, `sample_rotated.kicad_pcb` 0 → **2** (all new errors are genuine `unrouted-net` findings; the rotated fixture still reports 0 shorts).
 **v1.2.4 — 2026-11-24 (re-audit fixes, ChatGPT re-audit of v1.2.3):**
 `rules_check.py` now errors on a power pin marked no_connect
@@ -1348,3 +1349,7 @@ v1.2 covers the 13 capabilities (§4), the high-priority methods
 - ECO / versioning (changes on a routed board, netlist diffs)
 - Audit log / run cache across runs
 - Design documentation (design brief, PDF document)
+
+---
+
+*Made by PTS6845 — https://battingchart300.github.io*

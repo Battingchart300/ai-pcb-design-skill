@@ -77,7 +77,7 @@
     "trace_current_delta_t_c": 10
   },
   "skill": "ai-pcb-design-skill",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "corner_fix": {
     "chamfer_mm": 0.5,
     "enabled": true,

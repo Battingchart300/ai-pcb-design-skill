@@ -26,8 +26,14 @@ Modes:
          python trace_width.py --check-csv nets.csv
 
 Exit codes: 0 = pass (all widths sufficient / calculation done),
-1 = fail (at least one net undersized), 2 = setup missing (bad arguments
-or unreadable file).
+1 = fail (at least one net undersized, or a CSV with no data rows),
+2 = setup missing (bad arguments or unreadable file).
+
+Non-finite or non-positive numeric inputs (current, copper weight,
+temperature rise, actual width — inf, NaN, zero or negative) are
+rejected with a clean SETUP ERROR (exit 2), never a traceback and
+never a silent pass: infinite copper used to make any current fit
+any trace.
 
 Standard library only. Works on Windows, macOS and Linux.
 """
@@ -35,11 +41,12 @@ Standard library only. Works on Windows, macOS and Linux.
 import argparse
 import csv
 import json
+import math
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.5"
+VERSION = "1.2.6"
 SCRIPT = "trace_width"
 
 MIL_PER_MM = 1.0 / 0.0254          # 1 mm = 39.3701 mil
@@ -58,6 +65,12 @@ REFERENCE_MM = {0.5: 0.12, 1.0: 0.30, 2.0: 0.79, 3.0: 1.37, 5.0: 2.78, 10.0: 7.2
 
 def required_width_mm(current_a, copper_oz=1.0, layer="external", delta_t_c=10.0):
     """Minimum trace width in mm for a given current (IPC-2221)."""
+    if not math.isfinite(current_a):
+        raise ValueError("current must be a finite number (not NaN/inf)")
+    if not math.isfinite(copper_oz):
+        raise ValueError("copper weight must be a finite number (not NaN/inf)")
+    if not math.isfinite(delta_t_c):
+        raise ValueError("temperature rise must be a finite number (not NaN/inf)")
     if current_a <= 0:
         raise ValueError("current must be greater than zero")
     if copper_oz <= 0:
@@ -134,6 +147,12 @@ def main(argv=None):
         except (OSError, csv.Error) as exc:
             print(f"SETUP ERROR: cannot read CSV: {exc}", file=sys.stderr)
             return 2
+        # A CSV with a header but no data rows checks nothing — that is a
+        # fail, not a pass (it used to return 0 with zero rows checked).
+        if not rows:
+            print(f"ERROR: CSV file {path} has no data rows (only a header) "
+                  "— nothing to check", file=sys.stderr)
+            return 1
         results = []
         failures = 0
         for lineno, row in enumerate(rows, start=2):
@@ -145,6 +164,10 @@ def main(argv=None):
                 layer = (row.get("layer") or "external").strip().lower()
                 if layer not in ("external", "internal"):
                     raise ValueError(f"unknown layer '{layer}'")
+                if not math.isfinite(actual) or actual <= 0:
+                    raise ValueError(
+                        f"actual width {actual} is not a finite number "
+                        "greater than zero")
                 required = required_width_mm(current, copper, layer, args.delta_t)
             except (KeyError, TypeError, ValueError) as exc:
                 print(f"SETUP ERROR: line {lineno}: {exc}", file=sys.stderr)
@@ -172,6 +195,12 @@ def main(argv=None):
 
     if args.current is None:
         ap.error("one of --current, --table or --check-csv is required")
+
+    if args.actual is not None and (not math.isfinite(args.actual)
+                                    or args.actual <= 0):
+        print(f"SETUP ERROR: actual width must be a finite number greater "
+              f"than zero (got {args.actual})", file=sys.stderr)
+        return 2
 
     try:
         required = required_width_mm(args.current, args.copper, args.layer, args.delta_t)

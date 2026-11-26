@@ -7,9 +7,20 @@ small scripts do, and a human reviews the result.**
 Standard library only. No installation, no dependencies. Runs on Windows,
 macOS and Linux with Python 3.8+.
 
-**Version:** 1.2.5 — 2026-11-24
+**Version:** 1.2.6 — 2026-11-25
 
 ## Changelog
+
+### v1.2.6 — 2026-11-25
+
+Wave-2 Codex audit fixes (see SKILL.md / README.md): `bom_check.py`
+no longer skips the MPN check when the BOM has no MPN column, and
+`UNVERIFIED` in MPN or Footprint counts as missing; `rules_check.py`
+strict completeness (check 13: value + footprint + non-empty pins
+per part, at least one pin per net, board name/layers/fab required);
+`trace_width.py` rejects inf/NaN/zero/negative numeric inputs and a
+header-only CSV now FAILs; credit line "Made by PTS6845" in the
+`run_all.py` audit log (constant CREDIT). Example results unchanged.
 
 ### v1.2.5 — 2026-11-24
 

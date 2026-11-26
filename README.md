@@ -2,9 +2,35 @@
 
 Teach AI models to design PCBs — from a single prompt to a manufacturable board: schematic, layout, DRC checks, KiCad 10+ output and scripts.
 
-**Version:** 1.2.5 — 2026-11-24
+**Version:** 1.2.6 — 2026-11-25
 
 ## Changelog
+
+### v1.2.6 — 2026-11-25
+
+Wave-2 Codex audit fixes:
+
+- **`bom_check.py`**: a BOM with no MPN column is now an error
+  when MPN is required (config `bom.require_mpn`) — the check used
+  to be silently skipped and the BOM passed. `UNVERIFIED` in the
+  MPN or Footprint column now counts as missing.
+- **`rules_check.py`**: strict completeness (new check 13) — every
+  part needs a value, a footprint and a non-empty pins list; every
+  net needs at least one pin (an empty net is an error, a single-pin
+  net stays a warning); the board section must have a name, layers
+  and fab. A spec of `{"ref": "U1"}` with empty nets used to PASS.
+- **`trace_width.py`**: non-finite or non-positive numeric inputs
+  (inf/NaN/zero/negative current, copper weight, temperature rise
+  or actual width) are rejected with a clean error — infinite copper
+  used to let 10 A fit a 0.01 mm trace. A header-only CSV now FAILs
+  instead of passing with zero rows checked.
+- **Credit line**: "Made by PTS6845 —
+  https://battingchart300.github.io" in the SKILL.md and README.md
+  footers and in the `run_all.py` audit log (code constant CREDIT).
+  No online check, no behaviour change, no `--json` schema change.
+- Example results unchanged: spec.json 1 error / 3 warnings,
+  sample_bom.csv 3 errors / 1 warning, nets.csv 1 fail, DRC samples
+  24 / 13 / 2 errors.
 
 ### v1.2.5 — 2026-11-24
 
@@ -279,3 +305,7 @@ stdout stays parseable) — the log is the proof the check ran.
 ## License
 
 MIT — see `LICENSE`.
+
+---
+
+*Made by PTS6845 — https://battingchart300.github.io*
