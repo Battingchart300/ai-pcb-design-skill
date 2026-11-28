@@ -46,7 +46,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.6"
+VERSION = "1.2.7"
 SCRIPT = "trace_width"
 
 MIL_PER_MM = 1.0 / 0.0254          # 1 mm = 39.3701 mil

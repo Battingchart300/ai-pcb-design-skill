@@ -7,9 +7,22 @@ small scripts do, and a human reviews the result.**
 Standard library only. No installation, no dependencies. Runs on Windows,
 macOS and Linux with Python 3.8+.
 
-**Version:** 1.2.6 — 2026-11-25
+**Version:** 1.2.7 — 2026-11-27
 
 ## Changelog
+
+### v1.2.7 — 2026-11-27
+
+4-skill audit fixes in `rules_check.py` (see SKILL.md / README.md):
+`power_pins` that is not a list (e.g. `power_pins: 42`) is now an
+error (`power_pins-not-a-list`); a net pin given as an object instead
+of a string label is now an error (`net-pin-not-a-string`); a
+`no_connect` entry naming a part that is not in the spec (e.g.
+`Z99.1`) is now an error (`unknown-reference`); a footprint of
+`UNVERIFIED` counts as missing (`part-missing-footprint`, same rule
+as the BOM MPN check, case-insensitive). New regression fixtures in
+`examples/` and a pytest suite in `tests/` (9 tests). Example
+results unchanged.
 
 ### v1.2.6 — 2026-11-25
 
@@ -305,3 +318,24 @@ a design rule aimed at a fab that is not the one being used).
 - `examples/regression_nc_power.json` — a power pin (U1.1) marked
   `no_connect`. Must FAIL with exactly one error,
   `power-pin-no-connect` (ChatGPT re-audit P0: it used to pass).
+
+## Regression fixtures (audit 2026-11-27, v1.2.7)
+
+- `examples/regression_power_pins_int.json` — `power_pins: 42`
+  (a bare int, not a list). Must FAIL with exactly one error,
+  `power_pins-not-a-list` (audit P0: it used to pass).
+- `examples/regression_object_pin.json` — a net pin given as an
+  object (`{"ref": "C1", "num": "1"}`) instead of a string label.
+  Must FAIL with exactly one error, `net-pin-not-a-string`
+  (audit P0: it used to pass).
+- `examples/regression_no_connect_unknown.json` — `no_connect`
+  with a nonexistent pin (`Z99.1`). Must FAIL with exactly one
+  error, `unknown-reference` (audit P1: it used to pass).
+- `examples/regression_footprint_unverified.json` — a part whose
+  footprint is `UNVERIFIED`. Must FAIL with exactly one error,
+  `part-missing-footprint` — same rule as the BOM MPN check
+  (audit P1: it used to pass).
+
+All four fixtures are covered by `tests/test_rules_check.py`
+(run: `PYTHONPATH=$HOME/.local/lib/python3.12/site-packages
+python3 -m pytest` from the skill root).

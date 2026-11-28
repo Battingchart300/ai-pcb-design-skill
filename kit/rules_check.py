@@ -22,7 +22,9 @@ The specification is a JSON file (see examples/spec.json):
 Checks (the spec-first lint from the skill):
   1. Pin on two nets — a short. ERROR.
   2. Pin in a net AND in no_connect — contradictory. ERROR.
-  3. Unknown reference — a pin whose part is not in the parts list. ERROR.
+  3. Unknown reference — a pin whose part is not in the parts list
+     (in a net or in no_connect — a no_connect pin like Z99.1 is
+     an error, new in v1.2.7). ERROR.
   4. Power pin of a part not connected to any net. ERROR.
   5. IC/MCU/regulator with no decoupling capacitor on a shared net. WARNING.
   6. No bulk capacitor (>= bulk_cap_min_uf from config) anywhere. WARNING.
@@ -42,7 +44,14 @@ Checks (the spec-first lint from the skill):
      at least one pin (an empty net is an error, a single-pin net stays
      a warning under check 8); the board section must be present with a
      name, a layer count and a fab. A spec of {"ref": "U1"} with empty
-     nets used to PASS. ERROR. (New in v1.2.6.)
+     nets used to PASS. ERROR. (New in v1.2.6; a footprint of
+     "UNVERIFIED" counts as missing — same rule as the BOM MPN
+     check — new in v1.2.7.)
+
+  0. Structural types — pins / power_pins / net pins must be lists
+     of strings: a bare number (power_pins: 42), an object instead
+     of a pin label, or any other non-list value is an error.
+     ERROR. (New in v1.2.7: non-list values and object pin entries.)
 
 A value like "10uF", "100nF" or "4.7u" is parsed as a capacitance in uF.
 
@@ -67,7 +76,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.6"
+VERSION = "1.2.7"
 SCRIPT = "rules_check"
 
 CAP_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([unp]?)[fF]\s*$", re.IGNORECASE)
@@ -211,14 +220,18 @@ def check_spec(spec, config):
             value = part.get(field)
             if value is None:
                 continue
-            if isinstance(value, str):
+            if not isinstance(value, list):
+                # A bare number (power_pins: 42), an object or any other
+                # non-list value used to fall through silently — the
+                # check only caught text. Any non-list is an error.
+                kind = "text" if isinstance(value, str) else type(value).__name__
                 findings.append({"severity": "error", "check": f"{field}-not-a-list",
-                                 "message": f"part {ref} has {field} as text, "
+                                 "message": f"part {ref} has {field} as {kind}, "
                                             f"not a list of pin numbers — use a list "
                                             f"like [\"1\", \"2\"], or [] while the "
                                             f"pinout is still UNVERIFIED",
                                  "location": f"part {ref}"})
-            elif isinstance(value, list):
+            else:
                 bad_entries = [e for e in value
                                if not isinstance(e, str) or not PIN_NUM_RE.match(e)]
                 if bad_entries:
@@ -245,6 +258,19 @@ def check_spec(spec, config):
                                         "text, not a list — use a list like "
                                         "[\"U1.1\", \"C1.1\"]",
                              "location": f"net {net.get('name', '')}"})
+        elif isinstance(value, list):
+            # A pin entry that is an object ({"ref": "U1", "num": "1"})
+            # or a number used to be skipped silently by the pin map
+            # below — every pin reference must be a string like "U1.1".
+            bad_entries = [e for e in value if not isinstance(e, str)]
+            if bad_entries:
+                findings.append({"severity": "error", "check": "net-pin-not-a-string",
+                                 "message": f"net '{net.get('name', '')}' has pin "
+                                            f"entries that are not strings "
+                                            f"({bad_entries}) — every pin must be "
+                                            f"a string like \"U1.1\", not an object "
+                                            f"or a number",
+                                 "location": f"net {net.get('name', '')}"})
 
     def _pin_list(value):
         return value if isinstance(value, list) else []
@@ -267,14 +293,17 @@ def check_spec(spec, config):
                                         "\"ESP32-S3\", \"10k\", \"100nF\")",
                              "location": f"part {ref}"})
         footprint = part.get("footprint")
-        if not isinstance(footprint, str) or not footprint.strip():
+        if (not isinstance(footprint, str) or not footprint.strip()
+                or re.match(r"^UNVERIFIED\b", footprint.strip(),
+                            re.IGNORECASE)):
             findings.append({"severity": "error", "check": "part-missing-footprint",
-                             "message": f"part {ref} has no 'footprint' — "
-                                        "every part needs a footprint from "
-                                        "the datasheet land pattern",
+                             "message": f"part {ref} has no 'footprint' (or it "
+                                        "is UNVERIFIED) — every part needs a "
+                                        "footprint from the datasheet land "
+                                        "pattern",
                              "location": f"part {ref}"})
         pins = part.get("pins")
-        if isinstance(pins, str):
+        if pins is not None and not isinstance(pins, list):
             pass  # already reported once by check 0 as pins-not-a-list
         elif not isinstance(pins, list) or not pins:
             findings.append({"severity": "error", "check": "part-no-pins",
@@ -335,7 +364,7 @@ def check_spec(spec, config):
         net_names.append(name)
         for pin in pins:
             if not isinstance(pin, str):
-                continue  # already reported by check 0 as pins-not-a-number
+                continue  # already reported by check 0 as net-pin-not-a-string
             pin_to_nets.setdefault(pin, []).append(name)
 
     # --- check 1: pin on two nets (a short) --------------------------------
@@ -369,6 +398,25 @@ def check_spec(spec, config):
                              "message": f"pin {pin} refers to part {ref}, "
                                         "which is not in the parts list",
                              "location": f"net {pin_to_nets[pin][0]}"})
+
+    # --- check 3b: no_connect pins must refer to a part that exists --------
+    # A no_connect entry like Z99.1 used to pass silently: check 3 only
+    # looks at pins in nets, and check 11 skips refs with no declared
+    # pin list. A pin that names a part that is not in the spec cannot
+    # exist — it is a typo or a hallucinated part.
+    for pin in sorted(no_connect):
+        ref, _num = parse_pin(pin)
+        if ref is None:
+            findings.append({"severity": "error", "check": "malformed-pin",
+                             "message": f"pin '{pin}' in no_connect is not "
+                                        "in the form REF.NUM (e.g. U1.12)",
+                             "location": "no_connect"})
+        elif ref not in parts:
+            findings.append({"severity": "error", "check": "unknown-reference",
+                             "message": f"pin {pin} in no_connect refers to "
+                                        f"part {ref}, which is not in the "
+                                        "parts list",
+                             "location": "no_connect"})
 
     # --- check 11: pin number not in the part's declared pin list ---------
     # A net (or no_connect, or a power pin) that references U1.99 when
@@ -645,8 +693,9 @@ def main(argv=None):
     print(f"input: {spec_path} (sha256 {sha256_of(spec_path)[:16]}...)", file=sys.stderr)
     print(f"config: {config_path} (sha256 {sha256_of(config_path)[:16]}...)", file=sys.stderr)
     print("checks run: pin-on-two-nets, pin-net-and-nc, unknown-reference, "
-          "pins-not-a-list, power-pins-not-a-list, pins-not-a-number, "
-          "power-pin-not-a-number, net-pins-not-a-list, malformed-pin, "
+          "pins-not-a-list, power_pins-not-a-list, pins-not-a-number, "
+          "power_pins-not-a-number, net-pins-not-a-list, net-pin-not-a-string, "
+          "malformed-pin, "
           "power-pin-unconnected, power-pin-no-connect, no-decoupling, no-bulk-cap, "
           "i2c-no-pullup, single-pin-net, unconnected-pin, "
           "unknown-pin, forbidden-layer-count, unsupported-layer-count, "

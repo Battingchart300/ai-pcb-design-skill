@@ -2,9 +2,20 @@
 
 Teach AI models to design PCBs — from a single prompt to a manufacturable board: schematic, layout, DRC checks, KiCad 10+ output and scripts.
 
-**Version:** 1.2.6 — 2026-11-25
+**Version:** 1.2.7 — 2026-11-27
 
 ## Changelog
+
+### v1.2.7 — 2026-11-27
+
+4-skill audit fixes in `rules_check.py` — four inputs that used to PASS now FAIL:
+
+- **`power_pins: 42`** (a bare int, not a list) → `power_pins-not-a-list`.
+- **A net pin given as an object** instead of a string label → `net-pin-not-a-string`.
+- **`no_connect` with a nonexistent pin** (e.g. `Z99.1`) → `unknown-reference`.
+- **A footprint of `UNVERIFIED`** → `part-missing-footprint` (same rule as the BOM MPN check, case-insensitive).
+
+New regression fixtures in `kit/examples/` and a pytest suite in `tests/` (9 tests). Example results unchanged.
 
 ### v1.2.6 — 2026-11-25
 

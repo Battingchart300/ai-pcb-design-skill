@@ -40,7 +40,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.6"
+VERSION = "1.2.7"
 SCRIPT = "bom_check"
 
 REF_PATTERN = re.compile(r"^[A-Z]{1,3}\d+$")

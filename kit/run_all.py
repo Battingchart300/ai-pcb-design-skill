@@ -34,7 +34,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "1.2.6"
+VERSION = "1.2.7"
 SCRIPT = "run_all"
 CREDIT = "Made by PTS6845 — https://battingchart300.github.io"
 

@@ -1,0 +1,63 @@
+{
+  "board": {
+    "fab": "jlcpcb",
+    "layers": 2,
+    "name": "Regression footprint UNVERIFIED"
+  },
+  "nets": [
+    {
+      "name": "+3V3",
+      "pins": [
+        "U1.1",
+        "C1.1"
+      ]
+    },
+    {
+      "name": "GND",
+      "pins": [
+        "U1.2",
+        "C1.2"
+      ]
+    }
+  ],
+  "no_connect": [
+    "U1.3",
+    "U1.4",
+    "U1.5",
+    "U1.6",
+    "U1.7",
+    "U1.8"
+  ],
+  "parts": [
+    {
+      "footprint": "UNVERIFIED",
+      "mpn": "ESP32-S3-WROOM-1",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8"
+      ],
+      "power_pins": [
+        "1"
+      ],
+      "ref": "U1",
+      "type": "mcu",
+      "value": "ESP32-S3"
+    },
+    {
+      "footprint": "0805",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "ref": "C1",
+      "type": "capacitor",
+      "value": "10uF"
+    }
+  ]
+}
